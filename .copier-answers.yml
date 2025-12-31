@@ -1,0 +1,19 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v2.0.1
+_src_path: https://github.com/napari/napari-plugin-template
+display_name: PyPhenix
+email: ferrin@calicolabs.com
+full_name: Max Ferrin
+github_repository_url: https://github.com/ferrinm/pyphenix
+github_username_or_organization: ferrinm
+include_reader_plugin: true
+include_sample_data_plugin: false
+include_widget_plugin: true
+include_writer_plugin: true
+install_dependabot: true
+install_precommit: true
+license: GNU GPL v3.0
+module_name: pyphenix
+plugin_name: pyphenix
+short_description: A data loader and widget to visualize high-dimensional data collected
+    on the Opera Phenix
