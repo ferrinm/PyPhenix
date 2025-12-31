@@ -73,6 +73,7 @@ jobs:
     needs: [test, build-and-inspect-package]
     runs-on: ubuntu-latest
     if: contains(github.ref, 'tags')
+    environment: pypi
     permissions:
       id-token: write
     steps:
