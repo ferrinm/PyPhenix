@@ -82,3 +82,9 @@ venv/
 
 # written by setuptools_scm
 **/_version.py
+
+# emacs files
+*.el
+
+# personal testing emacs org-mode file
+README.org

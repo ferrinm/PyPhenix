@@ -1,56 +1,22 @@
 name: pyphenix
 display_name: PyPhenix
 # use 'hidden' to remove plugin from napari hub search results
-visibility: public
+visibility: hidden
 # see https://napari.org/stable/plugins/technical_references/manifest.html#fields for valid categories
 # categories: []
+
 contributions:
   commands:
     - id: pyphenix.get_reader
       python_name: pyphenix._reader:napari_get_reader
-      title: Open data with PyPhenix
-    - id: pyphenix.write_multiple
-      python_name: pyphenix._writer:write_multiple
-      title: Save multi-layer data with PyPhenix
-    - id: pyphenix.write_single_image
-      python_name: pyphenix._writer:write_single_image
-      title: Save image data with PyPhenix
-    - id: pyphenix.make_container_widget
-      python_name: pyphenix:ImageThreshold
-      title: Make threshold Container widget
-    - id: pyphenix.make_magic_widget
-      python_name: pyphenix:threshold_magic_widget
-      title: Make threshold magic widget
-    - id: pyphenix.make_function_widget
-      python_name: pyphenix:threshold_autogenerate_widget
-      title: Make threshold function widget
-    - id: pyphenix.make_qwidget
-      python_name: pyphenix:ExampleQWidget
-      title: Make example QWidget
+      title: Open Opera Phenix data
+    - id: pyphenix.make_data_loader_widget
+      python_name: pyphenix._widget:PhenixDataLoaderWidget
+      title: Make Opera Phenix Data Loader
   readers:
     - command: pyphenix.get_reader
-      accepts_directories: false
-      filename_patterns: ['*.npy']
-  writers:
-    - command: pyphenix.write_multiple
-      layer_types: ['image*','labels*']
-      filename_extensions: []
-    - command: pyphenix.write_single_image
-      layer_types: ['image']
-      filename_extensions: ['.npy']
+      accepts_directories: true
+      filename_patterns: ['*']
   widgets:
-    - command: pyphenix.make_container_widget
-      display_name: Container Threshold
-    - command: pyphenix.make_magic_widget
-      display_name: Magic Threshold
-    - command: pyphenix.make_function_widget
-      autogenerate: true
-      display_name: Autogenerate Threshold
-    - command: pyphenix.make_qwidget
-      display_name: Example QWidget
-  menus:
-    napari/layers/segment:
-      - command: pyphenix.make_container_widget
-      - command: pyphenix.make_magic_widget
-      - command: pyphenix.make_function_widget
-      - command: pyphenix.make_qwidget
+    - command: pyphenix.make_data_loader_widget
+      display_name: Opera Phenix Data Loader
