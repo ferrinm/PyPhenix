@@ -13,7 +13,7 @@ def mock_phenix_experiment(tmp_path):
     images_dir = tmp_path / "Images"
     images_dir.mkdir()
     
-    # Create a minimal Index.xml with proper structure
+    # Create a minimal Index.xml with proper structure matching what the reader expects
     root = ET.Element("OME")
     root.set("xmlns", "http://www.openmicroscopy.org/Schemas/OME/2016-06")
     
@@ -21,18 +21,22 @@ def mock_phenix_experiment(tmp_path):
     ns = "43B2A954-E3C3-47E1-B392-6635266B0DD3/HarmonyV7"
     ET.register_namespace('ns', ns)
     
-    # Add plate info - note: PlateID should be a child element with text, not an attribute
+    # Add plate info - match exact element names from your reader
     plate = ET.SubElement(root, f"{{{ns}}}Plate")
+    
+    # PlateID as child element
     plate_id = ET.SubElement(plate, f"{{{ns}}}PlateID")
     plate_id.text = "TEST001"
     
-    rows_elem = ET.SubElement(plate, f"{{{ns}}}Rows")
+    # PlateRows (not just "Rows")
+    rows_elem = ET.SubElement(plate, f"{{{ns}}}PlateRows")
     rows_elem.text = "2"
     
-    cols_elem = ET.SubElement(plate, f"{{{ns}}}Columns")
+    # PlateColumns (not just "Columns")
+    cols_elem = ET.SubElement(plate, f"{{{ns}}}PlateColumns")
     cols_elem.text = "2"
     
-    # Add a well
+    # Add a well with Row and Column as child elements
     well = ET.SubElement(plate, f"{{{ns}}}Well")
     well_row = ET.SubElement(well, f"{{{ns}}}Row")
     well_row.text = "01"
