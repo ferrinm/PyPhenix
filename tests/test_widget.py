@@ -62,8 +62,6 @@ def test_select_all_helper(widget_with_viewer, qtbot):
     test_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
     qtbot.addWidget(test_list)
     test_list.addItems(["Item 1", "Item 2", "Item 3"])
-    test_list.show()
-    qtbot.waitForWindowShown(test_list)
     
     # Initially nothing selected
     assert len(test_list.selectedItems()) == 0
@@ -82,8 +80,6 @@ def test_clear_all_helper(widget_with_viewer, qtbot):
     test_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
     qtbot.addWidget(test_list)
     test_list.addItems(["Item 1", "Item 2", "Item 3"])
-    test_list.show()
-    qtbot.waitForWindowShown(test_list)
     
     # Select all first
     widget._select_all(test_list)
@@ -102,8 +98,6 @@ def test_get_selected_indices(widget_with_viewer, qtbot):
     test_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
     qtbot.addWidget(test_list)
     test_list.addItems(["Item 1", "Item 2", "Item 3", "Item 4"])
-    test_list.show()
-    qtbot.waitForWindowShown(test_list)
     
     # Select specific items
     test_list.item(0).setSelected(True)

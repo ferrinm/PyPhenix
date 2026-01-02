@@ -28,16 +28,16 @@ def mock_phenix_experiment(tmp_path):
     plate_id = ET.SubElement(plate, f"{{{ns}}}PlateID")
     plate_id.text = "TEST001"
     
-    # PlateRows (not just "Rows")
+    # PlateRows
     rows_elem = ET.SubElement(plate, f"{{{ns}}}PlateRows")
     rows_elem.text = "2"
     
-    # PlateColumns (not just "Columns")
+    # PlateColumns
     cols_elem = ET.SubElement(plate, f"{{{ns}}}PlateColumns")
     cols_elem.text = "2"
     
-    # Add a well with Row and Column as child elements
-    well = ET.SubElement(plate, f"{{{ns}}}Well")
+    # Add a well with 'id' attribute (this is what your reader expects!)
+    well = ET.SubElement(plate, f"{{{ns}}}Well", id="0101")  # Add id attribute
     well_row = ET.SubElement(well, f"{{{ns}}}Row")
     well_row.text = "01"
     well_col = ET.SubElement(well, f"{{{ns}}}Column")
