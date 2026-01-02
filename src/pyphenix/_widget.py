@@ -1,4 +1,3 @@
-
 import napari
 from napari.utils import notifications
 import numpy as np
@@ -6,10 +5,25 @@ from pathlib import Path
 from typing import List
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QComboBox, QListWidget, QLabel, QCheckBox,
-                            QGroupBox, QAbstractItemView, QLineEdit, QFileDialog)
+                            QGroupBox, QAbstractItemView, QLineEdit, QFileDialog,
+                            QScrollArea)  # Add QScrollArea here
+from qtpy.QtCore import Qt
 
 from ._reader import OperaPhenixReader
 
+class CollapsibleGroupBox(QGroupBox):
+    """A collapsible group box."""
+    
+    def __init__(self, title="", parent=None):
+        super().__init__(title, parent)
+        self.setCheckable(True)
+        self.setChecked(True)
+        self.toggled.connect(self._on_toggle)
+        
+    def _on_toggle(self, checked):
+        """Show/hide content when toggled."""
+        for child in self.findChildren(QWidget):
+            child.setVisible(checked)
 
 class PhenixDataLoaderWidget(QWidget):
     """Interactive widget for loading and visualizing Opera Phenix data in Napari."""
@@ -34,6 +48,17 @@ class PhenixDataLoaderWidget(QWidget):
         
     def _build_ui(self):
         """Build the user interface."""
+        # Create main layout for the widget
+        main_layout = QVBoxLayout()
+        
+        # Create a scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
+        # Create a container widget for all the controls
+        container = QWidget()
         layout = QVBoxLayout()
         
         # Title
@@ -41,7 +66,7 @@ class PhenixDataLoaderWidget(QWidget):
         layout.addWidget(title)
         
         # Experiment path selector
-        path_group = QGroupBox("Experiment Selection")
+        path_group = CollapsibleGroupBox("Experiment Selection")
         path_layout = QVBoxLayout()
         
         path_input_layout = QHBoxLayout()
@@ -64,7 +89,7 @@ class PhenixDataLoaderWidget(QWidget):
         layout.addWidget(path_group)
         
         # Well selector
-        well_group = QGroupBox("Well Selection")
+        well_group = CollapsibleGroupBox("Well Selection")
         well_layout = QVBoxLayout()
         
         self.well_combo = QComboBox()
@@ -76,7 +101,7 @@ class PhenixDataLoaderWidget(QWidget):
         layout.addWidget(well_group)
         
         # Field selector
-        field_group = QGroupBox("Field Selection")
+        field_group = CollapsibleGroupBox("Field Selection")
         field_layout = QVBoxLayout()
         
         self.stitch_checkbox = QCheckBox("Stitch all fields")
@@ -91,7 +116,7 @@ class PhenixDataLoaderWidget(QWidget):
         layout.addWidget(field_group)
         
         # Timepoint selector
-        time_group = QGroupBox("Timepoint Selection")
+        time_group = CollapsibleGroupBox("Timepoint Selection")
         time_layout = QVBoxLayout()
         
         time_buttons = QHBoxLayout()
@@ -105,13 +130,14 @@ class PhenixDataLoaderWidget(QWidget):
         
         self.time_list = QListWidget()
         self.time_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.time_list.setMaximumHeight(100)  # Limit height
         time_layout.addWidget(self.time_list)
         
         time_group.setLayout(time_layout)
         layout.addWidget(time_group)
         
         # Channel selector
-        channel_group = QGroupBox("Channel Selection")
+        channel_group = CollapsibleGroupBox("Channel Selection")
         channel_layout = QVBoxLayout()
         
         channel_buttons = QHBoxLayout()
@@ -125,13 +151,14 @@ class PhenixDataLoaderWidget(QWidget):
         
         self.channel_list = QListWidget()
         self.channel_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.channel_list.setMaximumHeight(120)  # Limit height
         channel_layout.addWidget(self.channel_list)
         
         channel_group.setLayout(channel_layout)
         layout.addWidget(channel_group)
         
         # Z-slice selector
-        z_group = QGroupBox("Z-slice Selection")
+        z_group = CollapsibleGroupBox("Z-slice Selection")
         z_layout = QVBoxLayout()
         
         z_buttons = QHBoxLayout()
@@ -145,13 +172,14 @@ class PhenixDataLoaderWidget(QWidget):
         
         self.z_list = QListWidget()
         self.z_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.z_list.setMaximumHeight(100)  # Limit height
         z_layout.addWidget(self.z_list)
         
         z_group.setLayout(z_layout)
         layout.addWidget(z_group)
         
         # Save options
-        save_group = QGroupBox("Save Options")
+        save_group = CollapsibleGroupBox("Save Options")
         save_layout = QVBoxLayout()
         
         self.save_checkbox = QCheckBox("Save loaded data")
@@ -174,7 +202,19 @@ class PhenixDataLoaderWidget(QWidget):
         save_group.setLayout(save_layout)
         layout.addWidget(save_group)
         
-        # Visualize button
+        # Add stretch to push everything to the top
+        layout.addStretch()
+        
+        # Set the layout to the container
+        container.setLayout(layout)
+        
+        # Set the container as the scroll area's widget
+        scroll.setWidget(container)
+        
+        # Add scroll area to main layout
+        main_layout.addWidget(scroll)
+        
+        # Visualize button (outside scroll area, always visible)
         self.visualize_btn = QPushButton("Visualize Data")
         self.visualize_btn.setStyleSheet("""
             QPushButton {
@@ -191,9 +231,9 @@ class PhenixDataLoaderWidget(QWidget):
         """)
         self.visualize_btn.clicked.connect(self._visualize_data)
         self.visualize_btn.setEnabled(False)
-        layout.addWidget(self.visualize_btn)
+        main_layout.addWidget(self.visualize_btn)
         
-        self.setLayout(layout)
+        self.setLayout(main_layout)
         
         # Disable controls until experiment is loaded
         self._set_controls_enabled(False)
