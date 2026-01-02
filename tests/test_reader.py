@@ -13,56 +13,75 @@ def mock_phenix_experiment(tmp_path):
     images_dir = tmp_path / "Images"
     images_dir.mkdir()
     
-    # Create a minimal Index.xml
-    root = ET.Element("OME", attrib={
-        "xmlns": "http://www.openmicroscopy.org/Schemas/OME/2016-06",
-        "xmlns:ns": "43B2A954-E3C3-47E1-B392-6635266B0DD3/HarmonyV7"
-    })
+    # Create a minimal Index.xml with proper structure
+    root = ET.Element("OME")
+    root.set("xmlns", "http://www.openmicroscopy.org/Schemas/OME/2016-06")
     
-    # Add plate info
-    plate = ET.SubElement(root, "ns:Plate", attrib={
-        "PlateID": "TEST001",
-        "Rows": "2",
-        "Columns": "2"
-    })
+    # Register namespace
+    ns = "43B2A954-E3C3-47E1-B392-6635266B0DD3/HarmonyV7"
+    ET.register_namespace('ns', ns)
+    
+    # Add plate info - note: PlateID should be a child element with text, not an attribute
+    plate = ET.SubElement(root, f"{{{ns}}}Plate")
+    plate_id = ET.SubElement(plate, f"{{{ns}}}PlateID")
+    plate_id.text = "TEST001"
+    
+    rows_elem = ET.SubElement(plate, f"{{{ns}}}Rows")
+    rows_elem.text = "2"
+    
+    cols_elem = ET.SubElement(plate, f"{{{ns}}}Columns")
+    cols_elem.text = "2"
     
     # Add a well
-    well = ET.SubElement(plate, "ns:Well", attrib={
-        "Row": "01",
-        "Column": "01"
-    })
+    well = ET.SubElement(plate, f"{{{ns}}}Well")
+    well_row = ET.SubElement(well, f"{{{ns}}}Row")
+    well_row.text = "01"
+    well_col = ET.SubElement(well, f"{{{ns}}}Column")
+    well_col.text = "01"
     
     # Add channel info
-    channels = ET.SubElement(root, "ns:Channels")
-    channel = ET.SubElement(channels, "ns:Channel", attrib={
-        "ChannelID": "1",
-        "ChannelName": "DAPI",
-        "ExcitationWavelength": "405",
-        "EmissionWavelength": "450"
-    })
+    channels = ET.SubElement(root, f"{{{ns}}}Channels")
+    channel = ET.SubElement(channels, f"{{{ns}}}Channel")
+    ch_id = ET.SubElement(channel, f"{{{ns}}}ChannelID")
+    ch_id.text = "1"
+    ch_name = ET.SubElement(channel, f"{{{ns}}}ChannelName")
+    ch_name.text = "DAPI"
+    ex_wave = ET.SubElement(channel, f"{{{ns}}}ExcitationWavelength")
+    ex_wave.text = "405"
+    em_wave = ET.SubElement(channel, f"{{{ns}}}EmissionWavelength")
+    em_wave.text = "450"
     
     # Add image metadata
-    image = ET.SubElement(root, "ns:Image", attrib={
-        "Row": "01",
-        "Column": "01",
-        "FieldID": "1",
-        "PlaneID": "1",
-        "TimepointID": "1",
-        "ChannelID": "1",
-        "URL": "r01c01f01p01-ch1sk1fk1fl1.tiff"
-    })
+    image = ET.SubElement(root, f"{{{ns}}}Image")
+    img_row = ET.SubElement(image, f"{{{ns}}}Row")
+    img_row.text = "01"
+    img_col = ET.SubElement(image, f"{{{ns}}}Column")
+    img_col.text = "01"
+    field_id = ET.SubElement(image, f"{{{ns}}}FieldID")
+    field_id.text = "1"
+    plane_id = ET.SubElement(image, f"{{{ns}}}PlaneID")
+    plane_id.text = "1"
+    time_id = ET.SubElement(image, f"{{{ns}}}TimepointID")
+    time_id.text = "1"
+    img_ch_id = ET.SubElement(image, f"{{{ns}}}ChannelID")
+    img_ch_id.text = "1"
+    url = ET.SubElement(image, f"{{{ns}}}URL")
+    url.text = "r01c01f01p01-ch1sk1fk1fl1.tiff"
     
-    pixels = ET.SubElement(image, "ns:Pixels", attrib={
-        "SizeX": "100",
-        "SizeY": "100",
-        "PhysicalSizeX": "0.00065",
-        "PhysicalSizeY": "0.00065"
-    })
+    pixels = ET.SubElement(image, f"{{{ns}}}Pixels")
+    size_x = ET.SubElement(pixels, f"{{{ns}}}SizeX")
+    size_x.text = "100"
+    size_y = ET.SubElement(pixels, f"{{{ns}}}SizeY")
+    size_y.text = "100"
+    phys_x = ET.SubElement(pixels, f"{{{ns}}}PhysicalSizeX")
+    phys_x.text = "0.00065"
+    phys_y = ET.SubElement(pixels, f"{{{ns}}}PhysicalSizeY")
+    phys_y.text = "0.00065"
     
     # Write XML
     tree = ET.ElementTree(root)
     index_path = images_dir / "Index.xml"
-    tree.write(index_path)
+    tree.write(index_path, encoding='utf-8', xml_declaration=True)
     
     # Create a minimal test image
     test_image = np.random.randint(0, 255, (100, 100), dtype=np.uint16)

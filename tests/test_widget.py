@@ -4,14 +4,15 @@ from unittest.mock import Mock, patch
 from pathlib import Path
 
 from pyphenix._widget import PhenixDataLoaderWidget, CollapsibleGroupBox
-from qtpy.QtWidgets import QListWidget
+from qtpy.QtWidgets import QListWidget, QAbstractItemView
 
 
 @pytest.fixture
-def widget_with_viewer(make_napari_viewer):
+def widget_with_viewer(make_napari_viewer, qtbot):
     """Create widget with napari viewer."""
     viewer = make_napari_viewer()
     widget = PhenixDataLoaderWidget(viewer)
+    qtbot.addWidget(widget)
     return widget, viewer
 
 
@@ -39,9 +40,10 @@ def test_widget_controls_disabled_initially(widget_with_viewer):
     assert not widget.visualize_btn.isEnabled()
 
 
-def test_collapsible_groupbox():
+def test_collapsible_groupbox(qtbot):
     """Test CollapsibleGroupBox functionality."""
     group = CollapsibleGroupBox("Test Group")
+    qtbot.addWidget(group)
     
     assert group.isCheckable()
     assert group.isChecked()  # Should be checked by default
@@ -51,13 +53,17 @@ def test_collapsible_groupbox():
     assert not group.isChecked()
 
 
-def test_select_all_helper(widget_with_viewer):
+def test_select_all_helper(widget_with_viewer, qtbot):
     """Test _select_all helper method."""
     widget, _ = widget_with_viewer
     
     # Add some items to a list widget
     test_list = QListWidget()
+    test_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    qtbot.addWidget(test_list)
     test_list.addItems(["Item 1", "Item 2", "Item 3"])
+    test_list.show()
+    qtbot.waitForWindowShown(test_list)
     
     # Initially nothing selected
     assert len(test_list.selectedItems()) == 0
@@ -67,15 +73,20 @@ def test_select_all_helper(widget_with_viewer):
     assert len(test_list.selectedItems()) == 3
 
 
-def test_clear_all_helper(widget_with_viewer):
+def test_clear_all_helper(widget_with_viewer, qtbot):
     """Test _clear_all helper method."""
     widget, _ = widget_with_viewer
     
     # Add and select items
     test_list = QListWidget()
+    test_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    qtbot.addWidget(test_list)
     test_list.addItems(["Item 1", "Item 2", "Item 3"])
-    test_list.selectAll()
+    test_list.show()
+    qtbot.waitForWindowShown(test_list)
     
+    # Select all first
+    widget._select_all(test_list)
     assert len(test_list.selectedItems()) == 3
     
     # Clear selection
@@ -83,19 +94,23 @@ def test_clear_all_helper(widget_with_viewer):
     assert len(test_list.selectedItems()) == 0
 
 
-def test_get_selected_indices(widget_with_viewer):
+def test_get_selected_indices(widget_with_viewer, qtbot):
     """Test _get_selected_indices helper method."""
     widget, _ = widget_with_viewer
     
     test_list = QListWidget()
+    test_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    qtbot.addWidget(test_list)
     test_list.addItems(["Item 1", "Item 2", "Item 3", "Item 4"])
+    test_list.show()
+    qtbot.waitForWindowShown(test_list)
     
     # Select specific items
     test_list.item(0).setSelected(True)
     test_list.item(2).setSelected(True)
     
     indices = widget._get_selected_indices(test_list)
-    assert indices == [0, 2]
+    assert sorted(indices) == [0, 2]
 
 
 def test_stitch_checkbox_toggles_field_combo(widget_with_viewer):
