@@ -14,7 +14,6 @@ def mock_phenix_experiment(tmp_path):
     images_dir.mkdir()
     
     # Create XML with structure matching real Opera Phenix data
-    # Note: The real XML uses "EvaluationInputData" as root, not "OME"
     ns = "43B2A954-E3C3-47E1-B392-6635266B0DD3/HarmonyV7"
     
     root = ET.Element("EvaluationInputData")
@@ -43,10 +42,10 @@ def mock_phenix_experiment(tmp_path):
     plate_cols = ET.SubElement(plate, "PlateColumns")
     plate_cols.text = "2"
     
-    # Add wells in Plates section (just the id attribute)
+    # Add wells in Plates section
     well_plate = ET.SubElement(plate, "Well", id="0101")
     
-    # Add Wells section (detailed well information)
+    # Add Wells section
     wells = ET.SubElement(root, "Wells")
     well = ET.SubElement(wells, "Well")
     
@@ -59,16 +58,60 @@ def mock_phenix_experiment(tmp_path):
     well_col = ET.SubElement(well, "Col")
     well_col.text = "1"
     
-    # Add image references (K=timepoint, F=field, P=plane, R=channel)
-    # Format: wellK1F1P1R1 means well, timepoint 1, field 1, plane 1, channel 1
+    # Add image references
     image_ref = ET.SubElement(well, "Image", id="0101K1F1P1R1")
     
-    # Add Images section with detailed metadata
-    images = ET.SubElement(root, "Images")
-    image = ET.SubElement(images, "Image")
+    # Add Maps section with channel metadata
+    maps = ET.SubElement(root, "Maps")
+    map_elem = ET.SubElement(maps, "Map")
     
-    img_id = ET.SubElement(image, "ImageID")
+    entry = ET.SubElement(map_elem, "Entry", ChannelID="1")
+    
+    ch_name = ET.SubElement(entry, "ChannelName")
+    ch_name.text = "DAPI"
+    
+    img_type = ET.SubElement(entry, "ImageType")
+    img_type.text = "Signal"
+    
+    img_res_x = ET.SubElement(entry, "ImageResolutionX", Unit="m")
+    img_res_x.text = "2.96688132474701E-07"
+    
+    img_res_y = ET.SubElement(entry, "ImageResolutionY", Unit="m")
+    img_res_y.text = "2.96688132474701E-07"
+    
+    img_size_x = ET.SubElement(entry, "ImageSizeX")
+    img_size_x.text = "100"
+    
+    img_size_y = ET.SubElement(entry, "ImageSizeY")
+    img_size_y.text = "100"
+    
+    exc_wave = ET.SubElement(entry, "MainExcitationWavelength", Unit="nm")
+    exc_wave.text = "375"
+    
+    em_wave = ET.SubElement(entry, "MainEmissionWavelength", Unit="nm")
+    em_wave.text = "456"
+    
+    obj_mag = ET.SubElement(entry, "ObjectiveMagnification", Unit="")
+    obj_mag.text = "40"
+    
+    obj_na = ET.SubElement(entry, "ObjectiveNA", Unit="")
+    obj_na.text = "1.1"
+    
+    exp_time = ET.SubElement(entry, "ExposureTime", Unit="s")
+    exp_time.text = "0.1"
+    
+    # Add Images section with complete metadata
+    images = ET.SubElement(root, "Images")
+    image = ET.SubElement(images, "Image", Version="1")
+    
+    img_id = ET.SubElement(image, "id")
     img_id.text = "0101K1F1P1R1"
+    
+    state = ET.SubElement(image, "State")
+    state.text = "Ok"
+    
+    url = ET.SubElement(image, "URL")
+    url.text = "r01c01f01p01-ch1sk1fk1fl1.tiff"
     
     img_row = ET.SubElement(image, "Row")
     img_row.text = "1"
@@ -88,39 +131,18 @@ def mock_phenix_experiment(tmp_path):
     channel_id = ET.SubElement(image, "ChannelID")
     channel_id.text = "1"
     
-    url = ET.SubElement(image, "URL")
-    url.text = "r01c01f01p01-ch1sk1fk1fl1.tiff"
+    # Add position information (THIS WAS MISSING!)
+    pos_x = ET.SubElement(image, "PositionX", Unit="m")
+    pos_x.text = "0.0003204"
     
-    # Add pixel information
-    pixels = ET.SubElement(image, "Pixels")
+    pos_y = ET.SubElement(image, "PositionY", Unit="m")
+    pos_y.text = "0.0003204"
     
-    size_x = ET.SubElement(pixels, "SizeX")
-    size_x.text = "100"
+    pos_z = ET.SubElement(image, "PositionZ", Unit="m")
+    pos_z.text = "-2E-06"
     
-    size_y = ET.SubElement(pixels, "SizeY")
-    size_y.text = "100"
-    
-    phys_x = ET.SubElement(pixels, "PhysicalSizeX")
-    phys_x.text = "0.00065"
-    
-    phys_y = ET.SubElement(pixels, "PhysicalSizeY")
-    phys_y.text = "0.00065"
-    
-    # Add Channels section
-    channels = ET.SubElement(root, "Channels")
-    channel = ET.SubElement(channels, "Channel")
-    
-    ch_id = ET.SubElement(channel, "ChannelID")
-    ch_id.text = "1"
-    
-    ch_name = ET.SubElement(channel, "ChannelName")
-    ch_name.text = "DAPI"
-    
-    ex_wave = ET.SubElement(channel, "ExcitationWavelength")
-    ex_wave.text = "405"
-    
-    em_wave = ET.SubElement(channel, "EmissionWavelength")
-    em_wave.text = "450"
+    abs_pos_z = ET.SubElement(image, "AbsPositionZ", Unit="m")
+    abs_pos_z.text = "0.135366693"
     
     # Write XML
     tree = ET.ElementTree(root)
