@@ -13,81 +13,121 @@ def mock_phenix_experiment(tmp_path):
     images_dir = tmp_path / "Images"
     images_dir.mkdir()
     
-    # Create a minimal Index.xml with proper structure matching what the reader expects
-    root = ET.Element("OME")
-    root.set("xmlns", "http://www.openmicroscopy.org/Schemas/OME/2016-06")
-    
-    # Register namespace
+    # Create XML with structure matching real Opera Phenix data
+    # Note: The real XML uses "EvaluationInputData" as root, not "OME"
     ns = "43B2A954-E3C3-47E1-B392-6635266B0DD3/HarmonyV7"
-    ET.register_namespace('ns', ns)
     
-    # Add plate info - match exact element names from your reader
-    plate = ET.SubElement(root, f"{{{ns}}}Plate")
+    root = ET.Element("EvaluationInputData")
+    root.set("xmlns", ns)
+    root.set("xmlns:xsd", "http://www.w3.org/2001/XMLSchema")
+    root.set("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
+    root.set("Version", "2")
     
-    # PlateID as child element
-    plate_id = ET.SubElement(plate, f"{{{ns}}}PlateID")
+    # Add basic info
+    user = ET.SubElement(root, "User")
+    user.text = "TEST USER"
+    
+    instrument = ET.SubElement(root, "InstrumentType")
+    instrument.text = "Phenix"
+    
+    # Add Plates section
+    plates = ET.SubElement(root, "Plates")
+    plate = ET.SubElement(plates, "Plate")
+    
+    plate_id = ET.SubElement(plate, "PlateID")
     plate_id.text = "TEST001"
     
-    # PlateRows
-    rows_elem = ET.SubElement(plate, f"{{{ns}}}PlateRows")
-    rows_elem.text = "2"
+    plate_rows = ET.SubElement(plate, "PlateRows")
+    plate_rows.text = "2"
     
-    # PlateColumns
-    cols_elem = ET.SubElement(plate, f"{{{ns}}}PlateColumns")
-    cols_elem.text = "2"
+    plate_cols = ET.SubElement(plate, "PlateColumns")
+    plate_cols.text = "2"
     
-    # Add a well with 'id' attribute (this is what your reader expects!)
-    well = ET.SubElement(plate, f"{{{ns}}}Well", id="0101")  # Add id attribute
-    well_row = ET.SubElement(well, f"{{{ns}}}Row")
-    well_row.text = "01"
-    well_col = ET.SubElement(well, f"{{{ns}}}Column")
-    well_col.text = "01"
+    # Add wells in Plates section (just the id attribute)
+    well_plate = ET.SubElement(plate, "Well", id="0101")
     
-    # Add channel info
-    channels = ET.SubElement(root, f"{{{ns}}}Channels")
-    channel = ET.SubElement(channels, f"{{{ns}}}Channel")
-    ch_id = ET.SubElement(channel, f"{{{ns}}}ChannelID")
-    ch_id.text = "1"
-    ch_name = ET.SubElement(channel, f"{{{ns}}}ChannelName")
-    ch_name.text = "DAPI"
-    ex_wave = ET.SubElement(channel, f"{{{ns}}}ExcitationWavelength")
-    ex_wave.text = "405"
-    em_wave = ET.SubElement(channel, f"{{{ns}}}EmissionWavelength")
-    em_wave.text = "450"
+    # Add Wells section (detailed well information)
+    wells = ET.SubElement(root, "Wells")
+    well = ET.SubElement(wells, "Well")
     
-    # Add image metadata
-    image = ET.SubElement(root, f"{{{ns}}}Image")
-    img_row = ET.SubElement(image, f"{{{ns}}}Row")
-    img_row.text = "01"
-    img_col = ET.SubElement(image, f"{{{ns}}}Column")
-    img_col.text = "01"
-    field_id = ET.SubElement(image, f"{{{ns}}}FieldID")
+    well_id = ET.SubElement(well, "id")
+    well_id.text = "0101"
+    
+    well_row = ET.SubElement(well, "Row")
+    well_row.text = "1"
+    
+    well_col = ET.SubElement(well, "Col")
+    well_col.text = "1"
+    
+    # Add image references (K=timepoint, F=field, P=plane, R=channel)
+    # Format: wellK1F1P1R1 means well, timepoint 1, field 1, plane 1, channel 1
+    image_ref = ET.SubElement(well, "Image", id="0101K1F1P1R1")
+    
+    # Add Images section with detailed metadata
+    images = ET.SubElement(root, "Images")
+    image = ET.SubElement(images, "Image")
+    
+    img_id = ET.SubElement(image, "ImageID")
+    img_id.text = "0101K1F1P1R1"
+    
+    img_row = ET.SubElement(image, "Row")
+    img_row.text = "1"
+    
+    img_col = ET.SubElement(image, "Col")
+    img_col.text = "1"
+    
+    field_id = ET.SubElement(image, "FieldID")
     field_id.text = "1"
-    plane_id = ET.SubElement(image, f"{{{ns}}}PlaneID")
+    
+    plane_id = ET.SubElement(image, "PlaneID")
     plane_id.text = "1"
-    time_id = ET.SubElement(image, f"{{{ns}}}TimepointID")
-    time_id.text = "1"
-    img_ch_id = ET.SubElement(image, f"{{{ns}}}ChannelID")
-    img_ch_id.text = "1"
-    url = ET.SubElement(image, f"{{{ns}}}URL")
+    
+    timepoint_id = ET.SubElement(image, "TimepointID")
+    timepoint_id.text = "1"
+    
+    channel_id = ET.SubElement(image, "ChannelID")
+    channel_id.text = "1"
+    
+    url = ET.SubElement(image, "URL")
     url.text = "r01c01f01p01-ch1sk1fk1fl1.tiff"
     
-    pixels = ET.SubElement(image, f"{{{ns}}}Pixels")
-    size_x = ET.SubElement(pixels, f"{{{ns}}}SizeX")
+    # Add pixel information
+    pixels = ET.SubElement(image, "Pixels")
+    
+    size_x = ET.SubElement(pixels, "SizeX")
     size_x.text = "100"
-    size_y = ET.SubElement(pixels, f"{{{ns}}}SizeY")
+    
+    size_y = ET.SubElement(pixels, "SizeY")
     size_y.text = "100"
-    phys_x = ET.SubElement(pixels, f"{{{ns}}}PhysicalSizeX")
+    
+    phys_x = ET.SubElement(pixels, "PhysicalSizeX")
     phys_x.text = "0.00065"
-    phys_y = ET.SubElement(pixels, f"{{{ns}}}PhysicalSizeY")
+    
+    phys_y = ET.SubElement(pixels, "PhysicalSizeY")
     phys_y.text = "0.00065"
+    
+    # Add Channels section
+    channels = ET.SubElement(root, "Channels")
+    channel = ET.SubElement(channels, "Channel")
+    
+    ch_id = ET.SubElement(channel, "ChannelID")
+    ch_id.text = "1"
+    
+    ch_name = ET.SubElement(channel, "ChannelName")
+    ch_name.text = "DAPI"
+    
+    ex_wave = ET.SubElement(channel, "ExcitationWavelength")
+    ex_wave.text = "405"
+    
+    em_wave = ET.SubElement(channel, "EmissionWavelength")
+    em_wave.text = "450"
     
     # Write XML
     tree = ET.ElementTree(root)
     index_path = images_dir / "Index.xml"
     tree.write(index_path, encoding='utf-8', xml_declaration=True)
     
-    # Create a minimal test image
+    # Create test image file
     test_image = np.random.randint(0, 255, (100, 100), dtype=np.uint16)
     from PIL import Image
     img = Image.fromarray(test_image)
