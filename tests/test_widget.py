@@ -1,66 +1,208 @@
 import numpy as np
+import pytest
+from unittest.mock import Mock, patch
+from pathlib import Path
 
-from pyphenix._widget import (
-    ExampleQWidget,
-    ImageThreshold,
-    threshold_autogenerate_widget,
-    threshold_magic_widget,
-)
-
-
-def test_threshold_autogenerate_widget():
-    # because our "widget" is a pure function, we can call it and
-    # test it independently of napari
-    im_data = np.random.random((100, 100))
-    thresholded = threshold_autogenerate_widget(im_data, 0.5)
-    assert thresholded.shape == im_data.shape
-    # etc.
+from pyphenix._widget import PhenixDataLoaderWidget, CollapsibleGroupBox
+from qtpy.QtWidgets import QListWidget
 
 
-# make_napari_viewer is a pytest fixture that returns a napari viewer object
-# you don't need to import it, as long as napari is installed
-# in your testing environment
-def test_threshold_magic_widget(make_napari_viewer):
+@pytest.fixture
+def widget_with_viewer(make_napari_viewer):
+    """Create widget with napari viewer."""
     viewer = make_napari_viewer()
-    layer = viewer.add_image(np.random.random((100, 100)))
-
-    # our widget will be a MagicFactory or FunctionGui instance
-    my_widget = threshold_magic_widget()
-
-    # if we "call" this object, it'll execute our function
-    thresholded = my_widget(viewer.layers[0], 0.5)
-    assert thresholded.shape == layer.data.shape
-    # etc.
+    widget = PhenixDataLoaderWidget(viewer)
+    return widget, viewer
 
 
-def test_image_threshold_widget(make_napari_viewer):
-    viewer = make_napari_viewer()
-    layer = viewer.add_image(np.random.random((100, 100)))
-    my_widget = ImageThreshold(viewer)
+def test_widget_initialization(widget_with_viewer):
+    """Test that widget initializes properly."""
+    widget, viewer = widget_with_viewer
+    
+    assert widget.viewer == viewer
+    assert widget.reader is None
+    assert widget.metadata is None
+    
+    # Check that UI elements exist
+    assert hasattr(widget, 'path_input')
+    assert hasattr(widget, 'well_combo')
+    assert hasattr(widget, 'field_combo')
+    assert hasattr(widget, 'visualize_btn')
 
-    # because we saved our widgets as attributes of the container
-    # we can set their values without having to "interact" with the viewer
-    my_widget._image_layer_combo.value = layer
-    my_widget._threshold_slider.value = 0.5
 
-    # this allows us to run our functions directly and ensure
-    # correct results
-    my_widget._threshold_im()
+def test_widget_controls_disabled_initially(widget_with_viewer):
+    """Test that controls are disabled before loading experiment."""
+    widget, _ = widget_with_viewer
+    
+    assert not widget.well_combo.isEnabled()
+    assert not widget.field_combo.isEnabled()
+    assert not widget.visualize_btn.isEnabled()
+
+
+def test_collapsible_groupbox():
+    """Test CollapsibleGroupBox functionality."""
+    group = CollapsibleGroupBox("Test Group")
+    
+    assert group.isCheckable()
+    assert group.isChecked()  # Should be checked by default
+    
+    # Test toggling
+    group.setChecked(False)
+    assert not group.isChecked()
+
+
+def test_select_all_helper(widget_with_viewer):
+    """Test _select_all helper method."""
+    widget, _ = widget_with_viewer
+    
+    # Add some items to a list widget
+    test_list = QListWidget()
+    test_list.addItems(["Item 1", "Item 2", "Item 3"])
+    
+    # Initially nothing selected
+    assert len(test_list.selectedItems()) == 0
+    
+    # Select all
+    widget._select_all(test_list)
+    assert len(test_list.selectedItems()) == 3
+
+
+def test_clear_all_helper(widget_with_viewer):
+    """Test _clear_all helper method."""
+    widget, _ = widget_with_viewer
+    
+    # Add and select items
+    test_list = QListWidget()
+    test_list.addItems(["Item 1", "Item 2", "Item 3"])
+    test_list.selectAll()
+    
+    assert len(test_list.selectedItems()) == 3
+    
+    # Clear selection
+    widget._clear_all(test_list)
+    assert len(test_list.selectedItems()) == 0
+
+
+def test_get_selected_indices(widget_with_viewer):
+    """Test _get_selected_indices helper method."""
+    widget, _ = widget_with_viewer
+    
+    test_list = QListWidget()
+    test_list.addItems(["Item 1", "Item 2", "Item 3", "Item 4"])
+    
+    # Select specific items
+    test_list.item(0).setSelected(True)
+    test_list.item(2).setSelected(True)
+    
+    indices = widget._get_selected_indices(test_list)
+    assert indices == [0, 2]
+
+
+def test_stitch_checkbox_toggles_field_combo(widget_with_viewer):
+    """Test that stitch checkbox enables/disables field combo."""
+    widget, _ = widget_with_viewer
+    
+    # Enable controls first
+    widget._set_controls_enabled(True)
+    
+    # Initially field combo should be enabled
+    assert widget.field_combo.isEnabled()
+    
+    # Check stitch checkbox
+    widget.stitch_checkbox.setChecked(True)
+    assert not widget.field_combo.isEnabled()
+    
+    # Uncheck stitch checkbox
+    widget.stitch_checkbox.setChecked(False)
+    assert widget.field_combo.isEnabled()
+
+
+def test_browse_experiment_sets_path(widget_with_viewer, tmp_path, monkeypatch):
+    """Test that browse button sets path correctly."""
+    widget, _ = widget_with_viewer
+    
+    # Mock QFileDialog to return tmp_path
+    from qtpy.QtWidgets import QFileDialog
+    monkeypatch.setattr(
+        QFileDialog,
+        'getExistingDirectory',
+        lambda *args, **kwargs: str(tmp_path)
+    )
+    
+    widget._browse_experiment()
+    assert widget.path_input.text() == str(tmp_path)
+
+
+def test_load_experiment_warning_for_empty_path(widget_with_viewer):
+    """Test that loading with empty path shows warning."""
+    widget, _ = widget_with_viewer
+    
+    widget.path_input.setText("")
+    
+    with patch('pyphenix._widget.notifications.show_warning') as mock_warning:
+        widget._load_experiment()
+        mock_warning.assert_called_once()
+
+
+def test_visualize_warning_for_no_reader(widget_with_viewer):
+    """Test that visualizing without reader shows warning."""
+    widget, _ = widget_with_viewer
+    
+    assert widget.reader is None
+    
+    with patch('pyphenix._widget.notifications.show_warning') as mock_warning:
+        widget._visualize_data()
+        mock_warning.assert_called_once()
+
+
+def test_add_layers_creates_image_layers(widget_with_viewer):
+    """Test that _add_layers_to_viewer creates proper image layers."""
+    widget, viewer = widget_with_viewer
+    
+    # Create mock data
+    data = np.random.randint(0, 255, (1, 2, 5, 100, 100), dtype=np.uint16)
+    
+    metadata = {
+        'channels': {
+            1: {'name': 'DAPI', 'wavelength': 405},
+            2: {'name': 'GFP', 'wavelength': 488}
+        },
+        'pixel_size': {'x': 6.5e-7, 'y': 6.5e-7},
+        'z_step': 1e-6,
+        'well': 'r01c01',
+        'plate_id': 'TEST001',
+        'stitched': False,
+        'fields': [1]
+    }
+    
+    widget._add_layers_to_viewer(data, metadata)
+    
+    # Check that layers were added
     assert len(viewer.layers) == 2
+    
+    # Check first layer properties
+    layer = viewer.layers[0]
+    assert layer.name.startswith('Ch1')
+    assert 'DAPI' in layer.name
+    assert layer.colormap.name == 'blue'
 
 
-# capsys is a pytest fixture that captures stdout and stderr output streams
-def test_example_q_widget(make_napari_viewer, capsys):
-    # make viewer and add an image layer using our fixture
-    viewer = make_napari_viewer()
-    viewer.add_image(np.random.random((100, 100)))
-
-    # create our widget, passing in the viewer
-    my_widget = ExampleQWidget(viewer)
-
-    # call our widget method
-    my_widget._on_click()
-
-    # read captured output and check that it's as we expected
-    captured = capsys.readouterr()
-    assert captured.out == "napari has 1 layers\n"
+def test_set_controls_enabled(widget_with_viewer):
+    """Test _set_controls_enabled method."""
+    widget, _ = widget_with_viewer
+    
+    # Enable all controls
+    widget._set_controls_enabled(True)
+    
+    assert widget.well_combo.isEnabled()
+    assert widget.field_combo.isEnabled()
+    assert widget.time_list.isEnabled()
+    assert widget.channel_list.isEnabled()
+    
+    # Disable all controls
+    widget._set_controls_enabled(False)
+    
+    assert not widget.well_combo.isEnabled()
+    assert not widget.field_combo.isEnabled()
+    assert not widget.time_list.isEnabled()
+    assert not widget.channel_list.isEnabled()
