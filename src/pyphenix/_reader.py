@@ -210,40 +210,103 @@ class OperaPhenixReader:
             well_field_map[well_id] = sorted(well_field_map[well_id])
         
         return well_field_map
+
+    def _calculate_dataset_size(self) -> Tuple[int, str]:
+        """
+        Calculate expected total size of all TIFF files in the dataset based on metadata.
+
+        Returns
+        -------
+        size_bytes : int
+            Expected total size in bytes
+        size_human : str
+            Human-readable size string with breakdown
+        """
+        # Get image dimensions and bit depth
+        img_h, img_w = self.metadata.image_size
+        bytes_per_pixel = 2  # uint16
+
+        # Calculate size per image
+        pixels_per_image = img_h * img_w
+        bytes_per_image = pixels_per_image * bytes_per_pixel
+
+        # Count total number of images
+        total_images = len(self.image_index)
+
+        # Get counts for breakdown
+        n_wells = len(self.metadata.wells)
+        n_fields = len(self.metadata.fields)
+        n_timepoints = len(self.metadata.timepoints)
+        n_channels = len(self.metadata.channel_ids)
+        n_z_planes = len(self.metadata.planes)
+
+        # Calculate total expected size
+        total_size = total_images * bytes_per_image
+
+        # TIFF overhead (headers, metadata)
+        tiff_overhead_factor = 1.03
+        total_size_with_overhead = int(total_size * tiff_overhead_factor)
+
+        # Convert to human-readable format
+        size_value = float(total_size_with_overhead)
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_value < 1024.0:
+                size_human = f"{size_value:.2f} {unit}"
+                break
+            size_value /= 1024.0
+        else:
+            size_human = f"{size_value:.2f} PB"
+
+        # Create detailed breakdown
+        size_per_image_kb = bytes_per_image / 1024
+        breakdown = (f"{size_human} "
+                    f"({total_images:,} images × {size_per_image_kb:.1f} KB/image)")
+
+        return total_size_with_overhead, breakdown
     
     def _print_dataset_overview(self):
         """Print overview of entire dataset"""
         print("\n" + "="*60)
         print("DATASET OVERVIEW")
         print("="*60)
-        
+
         print(f"\nPlate ID: {self.metadata.plate_id}")
         print(f"Plate dimensions: {self.metadata.plate_rows} rows × {self.metadata.plate_columns} columns")
-        
+
+        # Calculate and display dataset size
+        total_size, size_breakdown = self._calculate_dataset_size()
+        print(f"Total dataset size (estimated): {size_breakdown}")
+
+        # Optional: Show the calculation
+        img_h, img_w = self.metadata.image_size
+        bytes_per_pixel = 2
+        total_images = len(self.image_index)
+        print(f"  Calculation: {total_images:,} images × {img_h}×{img_w} pixels × {bytes_per_pixel} bytes/pixel")
+
         print(f"\nWells with data: {len(self.metadata.wells)}")
         print(f"  Wells: {', '.join(self.metadata.wells)}")
-        
+
         print(f"\nFields per well:")
         for well_id in self.metadata.wells:
             row, col = int(well_id[:2]), int(well_id[2:])
             fields = self.well_field_map.get((row, col), [])
             print(f"  r{row:02d}c{col:02d}: {len(fields)} fields ({min(fields) if fields else 'N/A'}-{max(fields) if fields else 'N/A'})")
-        
+
         print(f"\nTimepoints: {len(self.metadata.timepoints)} ({min(self.metadata.timepoints)}-{max(self.metadata.timepoints)})")
-        
+
         print(f"\nChannels: {len(self.metadata.channel_ids)}")
         for ch_id in self.metadata.channel_ids:
             ch_info = self.metadata.channels[ch_id]
             print(f"  Channel {ch_id}: {ch_info['name']}")
-        
+
         print(f"\nZ-planes: {len(self.metadata.planes)} ({min(self.metadata.planes)}-{max(self.metadata.planes)})")
-        
+
         print(f"\nImage dimensions: {self.metadata.image_size[0]} × {self.metadata.image_size[1]} pixels")
         print(f"Pixel size: {self.metadata.pixel_size[0]*1e6:.3f} × {self.metadata.pixel_size[1]*1e6:.3f} µm")
-        
+
         if self.metadata.z_step is not None:
             print(f"Z-step: {self.metadata.z_step*1e6:.3f} µm")
-        
+
         print("="*60 + "\n")
     
     def read_data(self,
@@ -254,7 +317,7 @@ class OperaPhenixReader:
                 timepoints: Optional[Union[int, List[int]]] = None,
                 channels: Optional[Union[int, List[int]]] = None,
                 z_slices: Optional[Union[int, List[int]]] = None,
-                metadata_only: bool = False,  # NEW PARAMETER
+                metadata_only: bool = False,
                 output_file: Optional[str] = None,
                 output_format: Optional[str] = None) -> Tuple[np.ndarray, Dict]:
         """
@@ -596,38 +659,56 @@ class OperaPhenixReader:
         
         return metadata
     
-    def _print_metadata(self, metadata: Dict):
-        """Print metadata to console"""
+    def _print_metadata(self, metadata: dict):
+        """print metadata to console"""
         print("\n" + "="*60)
-        print("LOADED DATA SUMMARY")
+        print("loaded data summary")
         print("="*60)
-        
-        print(f"\nPlate ID: {metadata['plate_id']}")
-        print(f"Well: {metadata['well']}")
-        
-        print(f"\nData Shape: {metadata['shape']['dimensions']}")
-        print(f"  Dimension order: {metadata['shape']['description']}")
-        
-        print(f"\nChannels:")
+
+        print(f"\nplate id: {metadata['plate_id']}")
+        print(f"well: {metadata['well']}")
+
+        print(f"\ndata shape: {metadata['shape']['dimensions']}")
+        print(f"  dimension order: {metadata['shape']['description']}")
+
+        # calculate loaded data size in memory
+        shape = metadata['shape']['dimensions']
+        n_pixels = np.prod(shape)
+        bytes_per_pixel = 2  # uint16
+        total_bytes = n_pixels * bytes_per_pixel
+
+        # convert to human-readable
+        size_value = total_bytes
+        for unit in ['b', 'kb', 'mb', 'gb', 'tb']:
+            if size_value < 1024.0:
+                size_human = f"{size_value:.2f} {unit}"
+                break
+            size_value /= 1024.0
+        else:
+            size_human = f"{size_value:.2f} pb"
+
+        print(f"  loaded data size in memory: {size_human}")
+
+        print(f"\nchannels:")
         for ch_id, ch_info in metadata['channels'].items():
-            print(f"  Channel {ch_id}: {ch_info['name']}")
-            print(f"    Excitation: {ch_info['excitation']} nm")
-            print(f"    Emission: {ch_info['emission']} nm")
-            print(f"    Exposure: {ch_info['exposure']} s")
-        
-        print(f"\nFields: {metadata['fields']}")
-        print(f"Timepoints: {metadata['timepoints']}")
-        print(f"Z-slices: {metadata['z_slices']}")
-        
-        print(f"\nPhysical Dimensions:")
-        print(f"  Pixel size (X): {metadata['pixel_size']['x']*1e6:.3f} µm")
-        print(f"  Pixel size (Y): {metadata['pixel_size']['y']*1e6:.3f} µm")
+            print(f"  channel {ch_id}: {ch_info['name']}")
+            print(f"    excitation: {ch_info['excitation']} nm")
+            print(f"    emission: {ch_info['emission']} nm")
+            print(f"    exposure: {ch_info['exposure']} s")
+
+        print(f"\nfields: {metadata['fields']}")
+        print(f"timepoints: {metadata['timepoints']}")
+        print(f"z-slices: {metadata['z_slices']}")
+
+        print(f"\nphysical dimensions:")
+        print(f"  pixel size (x): {metadata['pixel_size']['x']*1e6:.3f} µm")
+        print(f"  pixel size (y): {metadata['pixel_size']['y']*1e6:.3f} µm")
         if metadata['z_step'] is not None:
-            print(f"  Z step: {metadata['z_step']*1e6:.3f} µm")
-        
+            print(f"  z step: {metadata['z_step']*1e6:.3f} µm")
+
         if metadata['stitched']:
-            print(f"\n*** Fields have been STITCHED ***")
-        
+            print(f"\n*** fields have been stitched ***")
+
         print("="*60 + "\n")
     
     def _save_output(self, data: np.ndarray, metadata: Dict,

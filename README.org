@@ -5,7 +5,7 @@
 #+subtitle: automatically read in data from Opera Phenix and interactively visualize via napari widgets
 #+author: Max Ferrin
 #+email: ferrin@calicolabs.com
-#+last_modified: <2025-12-22 Mon 11:45>
+#+last_modified: <2026-01-02 Fri 17:51>
 #+OPTIONS: toc:t num:nil author:t date:t title:t ^:nil broken-links:mark
 
 * Description
@@ -127,6 +127,12 @@ uv add matplotlib bioio bioio-tifffile
 
 Additional packages can always be installed down the line with ~uv add [package]~
 
+#+begin_src bash
+uv pip install -e .
+#+end_src
+
+#+RESULTS:
+
 ** Github repo initial setup
 /github CLI ~gh~ needs to be installed/
 
@@ -161,26 +167,39 @@ branch 'main' set up to track 'origin/main'.
 
 This should now be accessible at https://github.com/ferrinm/s1_pyphenix/blob/main/README.org
 
-** Example use code
+** Example use code (OUTDATED)
 :PROPERTIES:
 :header-args:python: :tangle no :kernel s1_pyphenix :session s1_pyphenix
 :END:
-
+- <2026-01-02 Fri> moving this over to [[id:ba84779b-19cd-44de-907a-198076a42682][s1_pyphenix_sandbox]] because the
+  uv-controlled virtual environment got messed up by setting up the plugin
 *** setup
+
 #+begin_src python
 import sys
 from importlib import reload
 
-from s1_pyphenix_functions import *
-reload(sys.modules['s1_pyphenix_functions'])
-from s1_pyphenix_functions import *
-
-export_path = '/Users/ferrin/mount/cb2/data/Ho_oh_data_archive/max/export_full_test/10-20-25-iDA_DJ1KO_PFF3wks-redo__2025-10-20T11_40_47-Measurement 1'
+from pyphenix import *
+# for debugging
+reload(sys.modules['pyphenix'])
+from pyphenix import *
 #+end_src
 
 #+RESULTS:
 :results:
+# [goto error]
+: [31m---------------------------------------------------------------------------[39m
+: [31mModuleNotFoundError[39m                       Traceback (most recent call last)
+: [36mCell[39m[36m [39m[32mIn[2][39m[32m, line 4[39m
+: [32m      1[39m [38;5;28;01mimport[39;00m[38;5;250m [39m[34;01msys[39;00m
+: [32m      2[39m [38;5;28;01mfrom[39;00m[38;5;250m [39m[34;01mimportlib[39;00m[38;5;250m [39m[38;5;28;01mimport[39;00m reload
+: [32m----> [39m[32m4[39m [38;5;28;01mfrom[39;00m[38;5;250m [39m[34;01mpyphenix[39;00m[38;5;250m [39m[38;5;28;01mimport[39;00m *
+: [32m      5[39m [38;5;66;03m# for debugging[39;00m
+: [32m      6[39m reload(sys.modules[[33m'[39m[33mpyphenix[39m[33m'[39m])
+: 
+: [31mModuleNotFoundError[39m: No module named 'pyphenix'
 :end:
+
 *** read metadata without loading data
 
 #+BEGIN_SRC python
@@ -501,10 +520,12 @@ viewer1 = create_phenix_data_loader('/path/to/experiment1')
 viewer2 = create_phenix_data_loader('/path/to/experiment2')
 #+END_SRC
 
-** Source code
+** Source code (OUTDATED)
 :PROPERTIES:
 :header-args:python: :tangle s1_pyphenix_functions.py :kernel s1_pyphenix :session s1_pyphenix
 :END:
+- <2026-01-02 Fri> I stopped updating the code here, instead writing to the
+  files in [[file:src/pyphenix/]] that napari hub is expecting
 *** load a single well from archive
 :PROPERTIES:
 :ID:       1656467d-3bcb-405e-a5e4-f390f918b075
@@ -3313,10 +3334,12 @@ def create_phenix_data_loader(experiment_path: str) -> napari.Viewer:
 :results:
 :end:
 
-** Prototyping area
+** Prototyping area (OUTDATED)
 :PROPERTIES:
 :header-args:python: :tangle no :kernel s1_pyphenix :session s1_pyphenix
 :END:
+- <2026-01-02 Fri> moving this over to [[id:ba84779b-19cd-44de-907a-198076a42682][s1_pyphenix_sandbox]] because the
+  uv-controlled virtual environment got messed up by setting up the plugin
 *** setup
 **** import     
 #+begin_src python

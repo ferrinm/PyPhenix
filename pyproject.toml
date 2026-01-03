@@ -33,6 +33,7 @@ dependencies = [
     "magicgui",
     "qtpy",
     "scikit-image",
+    "jupyter>=1.1.1",
 ]
 
 [project.optional-dependencies]
