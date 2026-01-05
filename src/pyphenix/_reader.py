@@ -1,4 +1,3 @@
-
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -23,6 +22,7 @@ class PhenixMetadata:
     pixel_size: Tuple[float, float]  # in meters
     z_step: Optional[float]
     timepoints: List[int]
+    timepoint_offsets: np.ndarray  # time in seconds for each timepoint
     fields: List[int]
     planes: List[int]
     channel_ids: List[int]
@@ -62,6 +62,43 @@ class OperaPhenixReader:
         self.metadata = self._parse_metadata()
         self.image_index = self._build_image_index()
         self.well_field_map = self._build_well_field_map()
+
+    def _parse_timepoint_offsets(self) -> np.ndarray:
+        """
+        Extract timepoint offsets in seconds from MeasurementTimeOffset field.
+        
+        Returns
+        -------
+        np.ndarray
+            Array of time offsets in seconds, indexed by timepoint position.
+            For example, array[0] is the time for TimepointID=1.
+        """
+        timepoint_dict = {}
+        
+        # Parse incrementally for memory efficiency with large XML files
+        for event, elem in ET.iterparse(str(self.index_xml_path), events=('end',)):
+            if elem.tag.endswith('Image'):
+                # Find TimepointID and MeasurementTimeOffset
+                tp_elem = elem.find('.//{*}TimepointID')
+                time_elem = elem.find('.//{*}MeasurementTimeOffset')
+                
+                if tp_elem is not None and time_elem is not None:
+                    timepoint_id = int(tp_elem.text)
+                    time_offset = float(time_elem.text)
+                    
+                    # Only store first occurrence of each timepoint
+                    if timepoint_id not in timepoint_dict:
+                        timepoint_dict[timepoint_id] = time_offset
+                
+                # Clear element to free memory
+                elem.clear()
+        
+        # Convert to sorted array
+        if not timepoint_dict:
+            return np.array([])
+        
+        sorted_timepoints = sorted(timepoint_dict.items())
+        return np.array([time for _, time in sorted_timepoints])
     
     def _parse_metadata(self) -> PhenixMetadata:
         """Parse metadata from Index.xml"""
@@ -154,6 +191,9 @@ class OperaPhenixReader:
             z_sorted = sorted(z_positions)
             z_step = abs(z_sorted[1] - z_sorted[0])
         
+        # Extract timepoint offsets
+        timepoint_offsets = self._parse_timepoint_offsets()
+        
         return PhenixMetadata(
             plate_id=plate_id,
             plate_rows=plate_rows,
@@ -164,6 +204,7 @@ class OperaPhenixReader:
             pixel_size=(pixel_size_y, pixel_size_x),
             z_step=z_step,
             timepoints=sorted(timepoints),
+            timepoint_offsets=timepoint_offsets,
             fields=sorted(fields),
             planes=sorted(planes),
             channel_ids=sorted(channel_ids)
@@ -210,6 +251,31 @@ class OperaPhenixReader:
             well_field_map[well_id] = sorted(well_field_map[well_id])
         
         return well_field_map
+
+    def format_timepoint_label(self, timepoint_idx: int) -> str:
+        """
+        Format a timepoint label for display.
+        
+        Parameters
+        ----------
+        timepoint_idx : int
+            Zero-based index of the timepoint (0 corresponds to first timepoint)
+            
+        Returns
+        -------
+        str
+            Formatted label, e.g., "T=27h 08m 15s"
+        """
+        if timepoint_idx >= len(self.metadata.timepoint_offsets):
+            return "T=???"
+        
+        seconds = self.metadata.timepoint_offsets[timepoint_idx]
+        
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        
+        return f"T={hours:02d}h {minutes:02d}m {secs:02d}s"
 
     def _calculate_dataset_size(self) -> Tuple[int, str]:
         """
@@ -293,6 +359,17 @@ class OperaPhenixReader:
             print(f"  r{row:02d}c{col:02d}: {len(fields)} fields ({min(fields) if fields else 'N/A'}-{max(fields) if fields else 'N/A'})")
 
         print(f"\nTimepoints: {len(self.metadata.timepoints)} ({min(self.metadata.timepoints)}-{max(self.metadata.timepoints)})")
+        
+        # Add time information
+        if len(self.metadata.timepoint_offsets) > 0:
+            time_increments = np.diff(self.metadata.timepoint_offsets)
+            mean_interval = time_increments.mean() if len(time_increments) > 0 else 0.0
+            total_duration = self.metadata.timepoint_offsets[-1] - self.metadata.timepoint_offsets[0] if len(self.metadata.timepoint_offsets) > 1 else 0.0
+            
+            print(f"  First timepoint: {self.format_timepoint_label(0)}")
+            print(f"  Last timepoint: {self.format_timepoint_label(len(self.metadata.timepoint_offsets) - 1)}")
+            print(f"  Mean interval: {mean_interval:.1f} s ({mean_interval/60:.1f} min)")
+            print(f"  Total duration: {total_duration/3600:.2f} hours")
 
         print(f"\nChannels: {len(self.metadata.channel_ids)}")
         for ch_id in self.metadata.channel_ids:
@@ -633,6 +710,19 @@ class OperaPhenixReader:
         """Prepare metadata dictionary for output"""
         channel_info = {ch: self.metadata.channels[ch] for ch in channels}
         
+        # Get time offsets for selected timepoints (convert to 0-based indexing)
+        selected_time_offsets = []
+        for tp in timepoints:
+            tp_idx = tp - 1  # Convert TimepointID to 0-based index
+            if 0 <= tp_idx < len(self.metadata.timepoint_offsets):
+                selected_time_offsets.append(float(self.metadata.timepoint_offsets[tp_idx]))
+        
+        # Calculate time increment if multiple timepoints
+        time_increment = None
+        if len(selected_time_offsets) > 1:
+            increments = np.diff(selected_time_offsets)
+            time_increment = float(increments.mean())
+        
         metadata = {
             'plate_id': self.metadata.plate_id,
             'plate_layout': {
@@ -646,6 +736,9 @@ class OperaPhenixReader:
             },
             'fields': fields,
             'timepoints': timepoints,
+            'timepoint_offsets': selected_time_offsets,
+            'time_increment': time_increment,
+            'time_unit': 's',
             'channels': channel_info,
             'z_slices': z_slices,
             'pixel_size': {
@@ -698,6 +791,12 @@ class OperaPhenixReader:
 
         print(f"\nfields: {metadata['fields']}")
         print(f"timepoints: {metadata['timepoints']}")
+        if metadata['timepoint_offsets']:
+            print(f"  timepoint offsets (s): {[f'{t:.1f}' for t in metadata['timepoint_offsets'][:5]]}")
+            if len(metadata['timepoint_offsets']) > 5:
+                print(f"    ... and {len(metadata['timepoint_offsets']) - 5} more")
+            if metadata['time_increment'] is not None:
+                print(f"  mean time increment: {metadata['time_increment']:.1f} s ({metadata['time_increment']/60:.1f} min)")
         print(f"z-slices: {metadata['z_slices']}")
 
         print(f"\nphysical dimensions:")

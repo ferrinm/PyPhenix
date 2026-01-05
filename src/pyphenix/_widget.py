@@ -6,7 +6,7 @@ from typing import List
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QComboBox, QListWidget, QLabel, QCheckBox,
                             QGroupBox, QAbstractItemView, QLineEdit, QFileDialog,
-                            QScrollArea)  # Add QScrollArea here
+                            QScrollArea)
 from qtpy.QtCore import Qt
 
 from ._reader import OperaPhenixReader
@@ -42,6 +42,9 @@ class PhenixDataLoaderWidget(QWidget):
         self.viewer = napari_viewer
         self.reader = None
         self.metadata = None
+        self.timepoint_overlay = None
+        self.current_metadata = None  # Store metadata from last loaded data
+        self.current_data = None  # Store currently loaded data
         
         # Build the widget UI
         self._build_ui()
@@ -178,12 +181,21 @@ class PhenixDataLoaderWidget(QWidget):
         z_group.setLayout(z_layout)
         layout.addWidget(z_group)
         
+        # Display options group
+        display_group = CollapsibleGroupBox("Display Options")
+        display_layout = QVBoxLayout()
+        
+        self.timestamp_checkbox = QCheckBox("Show timepoint timestamp")
+        self.timestamp_checkbox.setChecked(False)
+        self.timestamp_checkbox.stateChanged.connect(self._on_timestamp_toggle)
+        display_layout.addWidget(self.timestamp_checkbox)
+        
+        display_group.setLayout(display_layout)
+        layout.addWidget(display_group)
+        
         # Save options
         save_group = CollapsibleGroupBox("Save Options")
         save_layout = QVBoxLayout()
-        
-        self.save_checkbox = QCheckBox("Save loaded data")
-        save_layout.addWidget(self.save_checkbox)
         
         save_path_layout = QHBoxLayout()
         self.save_path_input = QLineEdit()
@@ -194,10 +206,32 @@ class PhenixDataLoaderWidget(QWidget):
         save_path_layout.addWidget(self.save_browse_btn)
         save_layout.addLayout(save_path_layout)
         
-        self.save_format_combo = QComboBox()
-        self.save_format_combo.addItems(["numpy", "ome-tiff"])
         save_layout.addWidget(QLabel("Save format:"))
+        self.save_format_combo = QComboBox()
+        self.save_format_combo.addItems(["ome-tiff", "numpy"])
         save_layout.addWidget(self.save_format_combo)
+        
+        self.save_btn = QPushButton("Save Current Data")
+        self.save_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 8px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:disabled {
+                background-color: #BDBDBD;
+                color: #757575;
+            }
+        """)
+        self.save_btn.clicked.connect(self._save_data)
+        self.save_btn.setEnabled(False)
+        save_layout.addWidget(self.save_btn)
         
         save_group.setLayout(save_layout)
         layout.addWidget(save_group)
@@ -254,7 +288,7 @@ class PhenixDataLoaderWidget(QWidget):
             self,
             "Save Data",
             "",
-            "Numpy files (*.npy);;TIFF files (*.tiff *.tif)"
+            "TIFF files (*.tiff *.tif);;Numpy files (*.npy)"
         )
         
         if file_path:
@@ -373,8 +407,145 @@ class PhenixDataLoaderWidget(QWidget):
         """Get list of selected indices from a list widget."""
         return [i.row() for i in list_widget.selectedIndexes()]
     
+    def _on_timestamp_toggle(self, state):
+        """Handle timestamp overlay toggle."""
+        if state == Qt.Checked:
+            self._add_timestamp_overlay()
+        else:
+            self._remove_timestamp_overlay()
+    
+    def _add_timestamp_overlay(self):
+        """Add timestamp text overlay to viewer."""
+        if self.current_metadata is None:
+            notifications.show_warning("Please load data first")
+            self.timestamp_checkbox.setChecked(False)
+            return
+        
+        if 'timepoint_offsets' not in self.current_metadata or not self.current_metadata['timepoint_offsets']:
+            notifications.show_warning("No timepoint information available")
+            self.timestamp_checkbox.setChecked(False)
+            return
+        
+        # Remove existing overlay if present
+        self._remove_timestamp_overlay()
+        
+        # Create text overlay
+        try:
+            self.timepoint_overlay = self.viewer.text_overlay
+            self.timepoint_overlay.visible = True
+            
+            # Connect to viewer dims change event
+            self.viewer.dims.events.current_step.connect(self._update_timestamp)
+            
+            # Initial update
+            self._update_timestamp()
+            
+        except Exception as e:
+            notifications.show_error(f"Error adding timestamp overlay: {str(e)}")
+            self.timestamp_checkbox.setChecked(False)
+    
+    def _remove_timestamp_overlay(self):
+        """Remove timestamp text overlay from viewer."""
+        if self.timepoint_overlay is not None:
+            try:
+                # Disconnect event
+                self.viewer.dims.events.current_step.disconnect(self._update_timestamp)
+                
+                # Hide overlay
+                self.viewer.text_overlay.visible = False
+                self.viewer.text_overlay.text = ""
+                
+                self.timepoint_overlay = None
+                
+            except Exception as e:
+                pass  # Silently handle if already disconnected
+    
+    def _update_timestamp(self, event=None):
+        """Update timestamp overlay with current timepoint."""
+        if self.current_metadata is None or self.timepoint_overlay is None:
+            return
+        
+        # Get current timepoint index from viewer
+        current_step = self.viewer.dims.current_step
+        
+        # Determine which axis is time (should be first axis if T > 1)
+        if len(current_step) > 0 and len(self.current_metadata['timepoint_offsets']) > 1:
+            time_idx = int(current_step[0])
+            
+            # Get time offset for current timepoint
+            if time_idx < len(self.current_metadata['timepoint_offsets']):
+                seconds = self.current_metadata['timepoint_offsets'][time_idx]
+                
+                # Format as HH:MM:SS
+                hours = int(seconds // 3600)
+                minutes = int((seconds % 3600) // 60)
+                secs = int(seconds % 60)
+                
+                timestamp_str = f"Time: {hours:02d}:{minutes:02d}:{secs:02d}"
+                
+                # Update overlay
+                self.viewer.text_overlay.text = timestamp_str
+                self.viewer.text_overlay.color = 'white'
+                self.viewer.text_overlay.font_size = 12
+            else:
+                self.viewer.text_overlay.text = "--:--:-- (h:m:s)"
+        else:
+            # Single timepoint
+            if len(self.current_metadata['timepoint_offsets']) == 1:
+                seconds = self.current_metadata['timepoint_offsets'][0]
+                hours = int(seconds // 3600)
+                minutes = int((seconds % 3600) // 60)
+                secs = int(seconds % 60)
+                timestamp_str = f"{hours:02d}:{minutes:02d}:{secs:02d} (h:m:s)"
+                self.viewer.text_overlay.text = timestamp_str
+            else:
+                self.viewer.text_overlay.text = ""
+    
+    def _save_data(self):
+        """Save the currently loaded data to file."""
+        if self.current_data is None or self.current_metadata is None:
+            notifications.show_warning("No data loaded to save")
+            return
+        
+        save_path = self.save_path_input.text()
+        if not save_path:
+            notifications.show_warning("Please specify a save path")
+            return
+        
+        save_format = self.save_format_combo.currentText()
+        
+        try:
+            output_path = Path(save_path)
+            
+            if save_format == 'numpy':
+                np.save(output_path, self.current_data)
+                metadata_path = output_path.with_suffix('.json')
+                import json
+                with open(metadata_path, 'w') as f:
+                    json.dump(self.current_metadata, f, indent=2, default=str)
+                notifications.show_info(f"Saved numpy array to: {output_path}")
+                print(f"Saved metadata to: {metadata_path}")
+            
+            elif save_format == 'ome-tiff':
+                try:
+                    import tifffile
+                    tifffile.imwrite(output_path, self.current_data, photometric='minisblack')
+                    metadata_path = output_path.with_suffix('.json')
+                    import json
+                    with open(metadata_path, 'w') as f:
+                        json.dump(self.current_metadata, f, indent=2, default=str)
+                    notifications.show_info(f"Saved OME-TIFF to: {output_path}")
+                    print(f"Saved metadata to: {metadata_path}")
+                except ImportError:
+                    notifications.show_error("tifffile not available. Please install it or use numpy format.")
+            
+        except Exception as e:
+            notifications.show_error(f"Error saving data: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
     def _visualize_data(self):
-        """Load, visualize, and optionally save selected data."""
+        """Load and visualize selected data."""
         if self.reader is None:
             notifications.show_warning("Please load an experiment first")
             return
@@ -414,18 +585,7 @@ class PhenixDataLoaderWidget(QWidget):
         notifications.show_info(f"Loading data for well {well_str}...")
         
         try:
-            # Determine save parameters
-            save_file = None
-            save_format = None
-            
-            if self.save_checkbox.isChecked():
-                save_file = self.save_path_input.text()
-                if save_file:
-                    save_format = self.save_format_combo.currentText()
-                else:
-                    notifications.show_warning("Save enabled but no path specified")
-            
-            # Load data
+            # Load data (without saving)
             data, metadata = self.reader.read_data(
                 row=row,
                 column=col,
@@ -433,16 +593,26 @@ class PhenixDataLoaderWidget(QWidget):
                 stitch_fields=stitch,
                 timepoints=timepoints,
                 channels=channels,
-                z_slices=z_slices,
-                output_file=save_file,
-                output_format=save_format
+                z_slices=z_slices
             )
             
-            # Clear existing layers
+            # Store data and metadata for saving later
+            self.current_data = data
+            self.current_metadata = metadata
+            
+            # Enable save button now that data is loaded
+            self.save_btn.setEnabled(True)
+            
+            # Clear existing layers and remove overlay
+            self._remove_timestamp_overlay()
             self.viewer.layers.clear()
             
             # Visualize data
             self._add_layers_to_viewer(data, metadata)
+            
+            # Re-enable timestamp if checkbox is checked
+            if self.timestamp_checkbox.isChecked():
+                self._add_timestamp_overlay()
             
             notifications.show_info("Data loaded successfully!")
             
@@ -461,14 +631,18 @@ class PhenixDataLoaderWidget(QWidget):
         
         # Color mapping
         color_map = {
+            'Brightfield': 'gray',
             'DAPI': 'blue',
             'Hoechst': 'blue',
             'Alexa 488': 'green',
             'GFP': 'green',
+            'EGFP': 'green',
             'Alexa 555': 'yellow',
-            'mCherry': 'red',
+            'mCherry': 'magenta',
+            'mStrawberry': 'magenta',
             'Alexa 647': 'magenta',
             'Cy5': 'magenta',
+            'Cy3': 'yellow',
         }
         default_colors = ['cyan', 'magenta', 'yellow', 'green', 'red', 'blue']
         
