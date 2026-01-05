@@ -481,7 +481,7 @@ class PhenixDataLoaderWidget(QWidget):
                 minutes = int((seconds % 3600) // 60)
                 secs = int(seconds % 60)
                 
-                timestamp_str = f"Time: {hours:02d}:{minutes:02d}:{secs:02d}"
+                timestamp_str = f"{hours:02d}:{minutes:02d}:{secs:02d} (h:m:s)"
                 
                 # Update overlay
                 self.viewer.text_overlay.text = timestamp_str
