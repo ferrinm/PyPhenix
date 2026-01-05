@@ -654,7 +654,7 @@ class OperaPhenixReader:
         # Track missing images
         missing_images = []
         
-        # Stitch images
+        # Stitch images with maximum intensity projection for overlaps
         for t_idx, timepoint in enumerate(timepoints):
             for c_idx, channel in enumerate(channels):
                 for z_idx, z_slice in enumerate(z_slices):
@@ -664,16 +664,19 @@ class OperaPhenixReader:
                             img_path = self.images_path / self.image_index[key]['url']
                             if img_path.exists():
                                 img = np.array(Image.open(img_path))
-                                
+
                                 # Calculate position in stitched image
                                 pos = field_positions[field]
                                 x_offset = int((pos[0] - min_x) / pixel_size)
-                                # FIX: Invert y-offset calculation
                                 y_offset = int((max_y - pos[1]) / pixel_size)
-                                
+
+                                # Use maximum intensity projection for overlaps
+                                current_region = data[t_idx, c_idx, z_idx,
+                                                    y_offset:y_offset+img_h,
+                                                    x_offset:x_offset+img_w]
                                 data[t_idx, c_idx, z_idx,
                                     y_offset:y_offset+img_h,
-                                    x_offset:x_offset+img_w] = img
+                                    x_offset:x_offset+img_w] = np.maximum(current_region, img)
                             else:
                                 missing_images.append({
                                     'key': key,
