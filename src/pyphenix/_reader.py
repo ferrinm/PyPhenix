@@ -716,34 +716,34 @@ class OperaPhenixReader:
             if key in self.image_index:
                 pos = self.image_index[key]['position']
                 field_positions[field] = (pos[0], pos[1])
-        
+
         if not field_positions:
             raise ValueError(f"No valid field positions found for well r{row:02d}c{col:02d}")
-        
+
         # Calculate stitched dimensions
         img_h, img_w = self.metadata.image_size
         pixel_size = self.metadata.pixel_size[0]  # assume square pixels
-        
+
         positions_x = [pos[0] for pos in field_positions.values()]
         positions_y = [pos[1] for pos in field_positions.values()]
-        
+
         min_x, max_x = min(positions_x), max(positions_x)
         min_y, max_y = min(positions_y), max(positions_y)
-        
+
         stitched_w = int((max_x - min_x) / pixel_size) + img_w
         stitched_h = int((max_y - min_y) / pixel_size) + img_h
-        
+
         # Initialize stitched array
         n_time = len(timepoints)
         n_channels = len(channels)
         n_z = len(z_slices)
-        
+
         data = np.zeros((n_time, n_channels, n_z, stitched_h, stitched_w),
-                       dtype=np.uint16)
-        
+                    dtype=np.uint16)
+
         # Track missing images
         missing_images = []
-        
+
         # Stitch images with maximum intensity projection for overlaps
         for t_idx, timepoint in enumerate(timepoints):
             for c_idx, channel in enumerate(channels):
@@ -760,7 +760,7 @@ class OperaPhenixReader:
                                 # Calculate position in stitched image
                                 pos = field_positions[field]
                                 x_offset = int((pos[0] - min_x) / pixel_size)
-                                y_offset = int((max_y - pos[1]) / pixel_size)
+                                y_offset = int((pos[1] - min_y) / pixel_size)
 
                                 # Use maximum intensity projection for overlaps
                                 current_region = data[t_idx, c_idx, z_idx,
@@ -781,7 +781,7 @@ class OperaPhenixReader:
                                 'path': f"r{row:02d}c{col:02d}f{field:02d}p{z_slice:02d}-ch{channel}sk1fk1fl1.tiff",
                                 'reason': 'not in index'
                             })
-        
+
         # Print warnings for missing images
         if missing_images:
             print("\n" + "!"*60)
@@ -795,7 +795,7 @@ class OperaPhenixReader:
                 print(f"  ... and {len(missing_images) - 10} more")
             print("  These positions will be filled with zeros.")
             print("!"*60 + "\n")
-        
+
         return data
     
     def _prepare_metadata_dict(self, row: int, col: int, fields: List[int],
