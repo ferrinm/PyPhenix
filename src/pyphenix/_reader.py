@@ -39,6 +39,10 @@ class OperaPhenixReader:
     def __init__(self, experiment_path: str):
         """
         Initialize reader with path to experiment directory.
+
+        Supports both:
+        - Export format: Images/Index.xml
+        - Archive format: images/ and index/ subdirectories
         
         Parameters
         ----------
@@ -46,22 +50,78 @@ class OperaPhenixReader:
             Path to the exported experiment directory
         """
         self.experiment_path = Path(experiment_path)
-        self.images_path = self.experiment_path / "Images"
-        self.index_xml_path = self.images_path / "Index.xml"
-        
+
+        # Detect and set paths based on structure
+        self._detect_structure()
+
         if not self.images_path.exists():
             raise FileNotFoundError(f"Images directory not found: {self.images_path}")
         if not self.index_xml_path.exists():
-            raise FileNotFoundError(f"Index.xml not found: {self.index_xml_path}")
-        
+            raise FileNotFoundError(f"Index XML not found: {self.index_xml_path}")
+
         # Parse metadata
         self.tree = ET.parse(self.index_xml_path)
         self.root = self.tree.getroot()
         self.ns = {'ns': '43B2A954-E3C3-47E1-B392-6635266B0DD3/HarmonyV7'}
-        
+
         self.metadata = self._parse_metadata()
         self.image_index = self._build_image_index()
         self.well_field_map = self._build_well_field_map()
+
+    def _detect_structure(self):
+        """
+        Detect whether this is export or archive format and set paths accordingly.
+
+        Sets:
+        - self.structure_type: 'export', 'archive', or 'unknown'
+        - self.images_path: path to images directory
+        - self.index_xml_path: path to index XML file
+        """
+        # Try export format first (case-insensitive check)
+        for images_name in ["Images", "images"]:
+            export_images = self.experiment_path / images_name
+            if export_images.exists():
+                # Look for Index.xml (case variations)
+                for index_name in ["Index.xml", "index.xml"]:
+                    export_index = export_images / index_name
+                    if export_index.exists():
+                        self.structure_type = "export"
+                        self.images_path = export_images
+                        self.index_xml_path = export_index
+                        print(f"Detected export format: {images_name}/{index_name}")
+                        return
+
+        # Try archive format (images/ and separate index/ directory)
+        archive_images = None
+        for images_name in ["images", "Images"]:
+            test_path = self.experiment_path / images_name
+            if test_path.exists():
+                archive_images = test_path
+                break
+
+        archive_index_dir = None
+        for index_name in ["index", "Index"]:
+            test_path = self.experiment_path / index_name
+            if test_path.exists():
+                archive_index_dir = test_path
+                break
+
+        if archive_images and archive_index_dir:
+            # Find any XML file in the index directory
+            index_xmls = list(archive_index_dir.glob("*.xml"))
+            if index_xmls:
+                self.structure_type = "archive"
+                self.images_path = archive_images
+                self.index_xml_path = index_xmls[0]  # Use first XML found
+                print(f"Detected archive format: {archive_images.name}/ and {archive_index_dir.name}/")
+                print(f"  Using index file: {self.index_xml_path.name}")
+                return
+
+        # Fallback: assume export format but warn
+        print("WARNING: Could not definitively detect format. Assuming export format.")
+        self.structure_type = "unknown"
+        self.images_path = self.experiment_path / "Images"
+        self.index_xml_path = self.images_path / "Index.xml"
 
     def _parse_timepoint_offsets(self) -> np.ndarray:
         """
@@ -582,7 +642,11 @@ class OperaPhenixReader:
                 for z_idx, z_slice in enumerate(z_slices):
                     key = (row, col, field, z_slice, timepoint, channel)
                     if key in self.image_index:
-                        img_path = self.images_path / self.image_index[key]['url']
+                        relative_url = self.image_index[key]['url']
+
+                        # Construct path based on structure type
+                        img_path = self._construct_image_path(relative_url, row, col)
+
                         if img_path.exists():
                             img = Image.open(img_path)
                             data[t_idx, c_idx, z_idx] = np.array(img)
@@ -615,6 +679,32 @@ class OperaPhenixReader:
         
         return data
     
+    def _construct_image_path(self, relative_url: str, row: int, col: int) -> Path:
+        """
+        Construct full image path handling both export and archive formats.
+
+        Archive format may use well subdirectories like r04c03/
+        Export format has flat structure
+        """
+        if self.structure_type == "archive":
+            # Try with well subdirectory first
+            well_dir = f"r{row:02d}c{col:02d}"
+            img_path = self.images_path / well_dir / relative_url
+
+            if img_path.exists():
+                return img_path
+
+            # Fallback: try without well subdirectory
+            img_path = self.images_path / relative_url
+            if img_path.exists():
+                return img_path
+
+            # Return the well-subdirectory path for error reporting
+            return self.images_path / well_dir / relative_url
+        else:
+            # Export format: flat structure
+            return self.images_path / relative_url
+
     def _read_and_stitch(self, row: int, col: int, fields: List[int],
                         timepoints: List[int], channels: List[int],
                         z_slices: List[int]) -> np.ndarray:
@@ -661,7 +751,9 @@ class OperaPhenixReader:
                     for field in fields:
                         key = (row, col, field, z_slice, timepoint, channel)
                         if key in self.image_index:
-                            img_path = self.images_path / self.image_index[key]['url']
+                            relative_url = self.image_index[key]['url']
+                            img_path = self._construct_image_path(relative_url, row, col)
+
                             if img_path.exists():
                                 img = np.array(Image.open(img_path))
 

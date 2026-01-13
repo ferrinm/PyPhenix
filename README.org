@@ -5,7 +5,7 @@
 #+subtitle: automatically read in data from Opera Phenix and interactively visualize via napari widgets
 #+author: Max Ferrin
 #+email: ferrin@calicolabs.com
-#+last_modified: <2026-01-02 Fri 17:51>
+#+last_modified: <2026-01-06 Tue 14:34>
 #+OPTIONS: toc:t num:nil author:t date:t title:t ^:nil broken-links:mark
 
 * Description
@@ -73,6 +73,20 @@
 ** wishlist [0/2]
 *** TODO alternate version that reads archive instead of export
 *** TODO wrapper that automatically detects archive vs. export and reads accordingly
+** testing notes
+*** <2026-01-06 Tue> Emily and Josh
+- put the plate ID that shows up in the window title immediately upon loading
+  experiment, before visualizing
+- allow for evenly spaced timepoints (every other, etc.)
+- print out what the metadata is for the currently selected well
+  - josh got started, will send some code to me
+- convert rows to alphabetical
+- show multiple wells
+- see why stitching is messed up for archive files
+- for saving, auto-populate plate name and well
+- document stuff that's in scripts
+- make well selection a grid reflecting the plate layout instead of dropdown menu
+- just 96 well and 384 well plates so far
 * Code
 ** Environment initial setup
 
