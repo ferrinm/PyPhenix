@@ -733,6 +733,14 @@ class OperaPhenixReader:
         stitched_w = int((max_x - min_x) / pixel_size) + img_w
         stitched_h = int((max_y - min_y) / pixel_size) + img_h
 
+        # Add debug output to verify positions
+        print(f"\nStitching debug info:")
+        print(f"  Position range X: {min_x:.6f} to {max_x:.6f} m")
+        print(f"  Position range Y: {min_y:.6f} to {max_y:.6f} m")
+        print(f"  Stitched size: {stitched_h} × {stitched_w} pixels")
+        print(f"  Pixel size: {pixel_size*1e6:.3f} µm")
+        print(f"  Field positions:")
+
         # Initialize stitched array
         n_time = len(timepoints)
         n_channels = len(channels)
@@ -760,7 +768,14 @@ class OperaPhenixReader:
                                 # Calculate position in stitched image
                                 pos = field_positions[field]
                                 x_offset = int((pos[0] - min_x) / pixel_size)
-                                y_offset = int((pos[1] - min_y) / pixel_size)
+
+                                # Stage Y increases upward, image Y increases downward
+                                y_offset = int((max_y - pos[1]) / pixel_size)
+
+                                # Debug output for first timepoint/channel/z only
+                                if t_idx == 0 and c_idx == 0 and z_idx == 0:
+                                    print(f"    Field {field}: stage ({pos[0]:.6f}, {pos[1]:.6f}) m "
+                                        f"→ pixel offset ({x_offset}, {y_offset})")
 
                                 # Use maximum intensity projection for overlaps
                                 current_region = data[t_idx, c_idx, z_idx,
