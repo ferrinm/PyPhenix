@@ -22,10 +22,11 @@ class PhenixMetadata:
     pixel_size: Tuple[float, float]  # in meters
     z_step: Optional[float]
     timepoints: List[int]
-    timepoint_offsets: np.ndarray  # time in seconds for each timepoint
+    timepoint_offsets: np.ndarray
     fields: List[int]
     planes: List[int]
     channel_ids: List[int]
+    orientation_matrix: Optional[np.ndarray] = None
 
 
 class OperaPhenixReader:
@@ -88,7 +89,7 @@ class OperaPhenixReader:
                         self.structure_type = "export"
                         self.images_path = export_images
                         self.index_xml_path = export_index
-                        print(f"Detected export format: {images_name}/{index_name}")
+                        print(f"Detected directory format: {images_name}/{index_name}")
                         return
 
         # Try archive format (images/ and separate index/ directory)
@@ -113,7 +114,7 @@ class OperaPhenixReader:
                 self.structure_type = "archive"
                 self.images_path = archive_images
                 self.index_xml_path = index_xmls[0]  # Use first XML found
-                print(f"Detected archive format: {archive_images.name}/ and {archive_index_dir.name}/")
+                print(f"Detected directory format: {archive_images.name}/ and {archive_index_dir.name}/")
                 print(f"  Using index file: {self.index_xml_path.name}")
                 return
 
@@ -159,6 +160,29 @@ class OperaPhenixReader:
         
         sorted_timepoints = sorted(timepoint_dict.items())
         return np.array([time for _, time in sorted_timepoints])
+
+    def _parse_orientation_matrix(self) -> Optional[np.ndarray]:
+        """
+        Parse the OrientationMatrix from channel metadata.
+
+        Returns
+        -------
+        np.ndarray or None
+            3x4 transformation matrix, or None if not found
+        """
+        channel_maps = self.root.findall('.//ns:Maps/ns:Map', self.ns)
+        for map_elem in channel_maps:
+            entries = map_elem.findall('ns:Entry', self.ns)
+            for entry in entries:
+                orient_elem = entry.find('ns:OrientationMatrix', self.ns)
+                if orient_elem is not None:
+                    # Parse string like "[[0.960371,0,0,-14.6],[0,-0.960371,0,4.4],[0,0,1.00,-0.033]]"
+                    import re
+                    import ast
+                    matrix_str = orient_elem.text
+                    matrix_list = ast.literal_eval(matrix_str)
+                    return np.array(matrix_list)
+        return None
     
     def _parse_metadata(self) -> PhenixMetadata:
         """Parse metadata from Index.xml"""
@@ -254,6 +278,9 @@ class OperaPhenixReader:
         # Extract timepoint offsets
         timepoint_offsets = self._parse_timepoint_offsets()
         
+        # Parse orientation matrix
+        orientation_matrix = self._parse_orientation_matrix()
+
         return PhenixMetadata(
             plate_id=plate_id,
             plate_rows=plate_rows,
@@ -267,7 +294,8 @@ class OperaPhenixReader:
             timepoint_offsets=timepoint_offsets,
             fields=sorted(fields),
             planes=sorted(planes),
-            channel_ids=sorted(channel_ids)
+            channel_ids=sorted(channel_ids),
+            orientation_matrix=orientation_matrix  # Add this field
         )
     
     def _build_image_index(self) -> Dict:
@@ -715,14 +743,27 @@ class OperaPhenixReader:
             key = (row, col, field, z_slices[0], timepoints[0], channels[0])
             if key in self.image_index:
                 pos = self.image_index[key]['position']
-                field_positions[field] = (pos[0], pos[1])
+
+                # Apply inverse of orientation matrix scale to correct stage positions
+                if self.metadata.orientation_matrix is not None:
+                    matrix = self.metadata.orientation_matrix
+                    sx = matrix[0, 0]  
+                    sy = matrix[1, 1]  
+
+                    # Apply INVERSE scale (divide instead of multiply)
+                    pos_x_corrected = pos[0] / sx
+                    pos_y_corrected = pos[1] / sy  # sy is negative, so this flips Y
+
+                    field_positions[field] = (pos_x_corrected, pos_y_corrected)
+                else:
+                    field_positions[field] = (pos[0], pos[1])
 
         if not field_positions:
             raise ValueError(f"No valid field positions found for well r{row:02d}c{col:02d}")
 
         # Calculate stitched dimensions
         img_h, img_w = self.metadata.image_size
-        pixel_size = self.metadata.pixel_size[0]  # assume square pixels
+        pixel_size = self.metadata.pixel_size[0]
 
         positions_x = [pos[0] for pos in field_positions.values()]
         positions_y = [pos[1] for pos in field_positions.values()]
@@ -730,15 +771,42 @@ class OperaPhenixReader:
         min_x, max_x = min(positions_x), max(positions_x)
         min_y, max_y = min(positions_y), max(positions_y)
 
-        stitched_w = int((max_x - min_x) / pixel_size) + img_w
-        stitched_h = int((max_y - min_y) / pixel_size) + img_h
+        # Use rounding for better precision
+        stitched_w_float = (max_x - min_x) / pixel_size + img_w
+        stitched_h_float = (max_y - min_y) / pixel_size + img_h
 
-        # Add debug output to verify positions
+        stitched_w = int(np.round(stitched_w_float))
+        stitched_h = int(np.round(stitched_h_float))
+
+        # Debug output
         print(f"\nStitching debug info:")
+        print(f"  Image size: {img_h}×{img_w} pixels")
+        print(f"  Pixel size: {pixel_size*1e6:.4f} µm")
+        print(f"  Field width: {img_w * pixel_size*1e6:.2f} µm")
+
+        if self.metadata.orientation_matrix is not None:
+            matrix = self.metadata.orientation_matrix
+            print(f"  Orientation matrix:")
+            print(f"    Original scale: ({matrix[0,0]:.6f}, {matrix[1,1]:.6f})")
+            print(f"    Applied inverse scale: ({1/matrix[0,0]:.6f}, {1/abs(matrix[1,1]):.6f})")
+
+        if len(field_positions) >= 2:
+            positions = sorted(field_positions.items())
+            field1_pos = positions[0][1]
+            field2_pos = positions[1][1]
+            dx = abs(field2_pos[0] - field1_pos[0]) * 1e6
+            dy = abs(field2_pos[1] - field1_pos[1]) * 1e6
+
+            # Calculate spacing to nearest neighbor (not maximum)
+            spacing = min(dx, dy) if min(dx, dy) > 0 else max(dx, dy)
+
+            print(f"  Field spacing (after correction): Δx={dx:.2f} µm, Δy={dy:.2f} µm")
+            print(f"  Nearest neighbor spacing: {spacing:.2f} µm")
+            print(f"  Expected overlap: {100 * (1 - spacing/(img_w * pixel_size*1e6)):.1f}%")
+
         print(f"  Position range X: {min_x:.6f} to {max_x:.6f} m")
         print(f"  Position range Y: {min_y:.6f} to {max_y:.6f} m")
         print(f"  Stitched size: {stitched_h} × {stitched_w} pixels")
-        print(f"  Pixel size: {pixel_size*1e6:.3f} µm")
         print(f"  Field positions:")
 
         # Initialize stitched array
@@ -765,16 +833,21 @@ class OperaPhenixReader:
                             if img_path.exists():
                                 img = np.array(Image.open(img_path))
 
-                                # Calculate position in stitched image
+                                # Calculate position in stitched image with rounding
                                 pos = field_positions[field]
-                                x_offset = int((pos[0] - min_x) / pixel_size)
 
-                                # Stage Y increases upward, image Y increases downward
-                                y_offset = int((max_y - pos[1]) / pixel_size)
+                                x_offset = int(np.round((pos[0] - min_x) / pixel_size))
+
+                                # Use min_y because sy is negative (already flipped by division)
+                                y_offset = int(np.round((pos[1] - min_y) / pixel_size))
+
+                                # Ensure offsets are within bounds
+                                x_offset = max(0, min(x_offset, stitched_w - img_w))
+                                y_offset = max(0, min(y_offset, stitched_h - img_h))
 
                                 # Debug output for first timepoint/channel/z only
                                 if t_idx == 0 and c_idx == 0 and z_idx == 0:
-                                    print(f"    Field {field}: stage ({pos[0]:.6f}, {pos[1]:.6f}) m "
+                                    print(f"    Field {field}: corrected stage ({pos[0]:.6f}, {pos[1]:.6f}) m "
                                         f"→ pixel offset ({x_offset}, {y_offset})")
 
                                 # Use maximum intensity projection for overlaps
