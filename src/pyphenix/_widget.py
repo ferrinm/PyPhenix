@@ -329,25 +329,31 @@ class PhenixDataLoaderWidget(QWidget):
     
     def _populate_selectors(self):
         """Populate all selector widgets with experiment data."""
-        # Wells
+        # Wells - convert to letter notation
         self.well_combo.clear()
-        self.well_combo.addItems([f"r{w[:2]}c{w[2:]}" for w in self.metadata.wells])
-        
+        well_items = []
+        for w in self.metadata.wells:
+            row_num = int(w[:2])
+            col_num = int(w[2:])
+            row_letter = self.reader.row_to_letter(row_num)
+            well_items.append(f"{row_letter}{col_num:02d}")
+        self.well_combo.addItems(well_items)
+
         # Update fields for first well
         self._update_field_selector()
-        
+
         # Timepoints
         self.time_list.clear()
         self.time_list.addItems([f"Timepoint {t}" for t in self.metadata.timepoints])
         self.time_list.item(0).setSelected(True)
-        
+
         # Channels
         self.channel_list.clear()
         for ch_id in self.metadata.channel_ids:
             ch_name = self.metadata.channels[ch_id]['name']
             self.channel_list.addItem(f"Ch{ch_id}: {ch_name}")
         self._select_all(self.channel_list)
-        
+
         # Z-slices
         self.z_list.clear()
         self.z_list.addItems([f"Z-plane {z}" for z in self.metadata.planes])
@@ -381,16 +387,21 @@ class PhenixDataLoaderWidget(QWidget):
         """Update field selector based on selected well."""
         if self.metadata is None:
             return
-            
+
         well_str = self.well_combo.currentText()
         if not well_str:
             return
-            
-        row = int(well_str[1:3])
-        col = int(well_str[4:6])
-        
-        available_fields = self.reader.well_field_map.get((row, col), self.metadata.fields)
-        
+
+        # Parse well string in letter notation (e.g., "A03" or "B12")
+        # Extract row letter and column number
+        row_letter = well_str[0]
+        col_num = int(well_str[1:])
+
+        # Convert row letter to numeric
+        row_num = self.reader.letter_to_row(row_letter)
+
+        available_fields = self.reader.well_field_map.get((row_num, col_num), self.metadata.fields)
+
         self.field_combo.clear()
         self.field_combo.addItems([f"Field {f}" for f in available_fields])
     
@@ -549,41 +560,46 @@ class PhenixDataLoaderWidget(QWidget):
         if self.reader is None:
             notifications.show_warning("Please load an experiment first")
             return
-        
+
         # Get selections
         well_str = self.well_combo.currentText()
-        row = int(well_str[1:3])
-        col = int(well_str[4:6])
-        
+
+        # Parse well string in letter notation (e.g., "A03" or "B12")
+        row_letter = well_str[0]
+        col = int(well_str[1:])
+
+        # Convert row letter to numeric for internal use
+        row = self.reader.letter_to_row(row_letter)
+
         stitch = self.stitch_checkbox.isChecked()
-        
+
         if not stitch:
             field_str = self.field_combo.currentText()
             field = int(field_str.split()[1])
         else:
             field = None
-        
+
         time_indices = self._get_selected_indices(self.time_list)
         if not time_indices:
             notifications.show_warning("No timepoints selected")
             return
         timepoints = [self.metadata.timepoints[i] for i in time_indices]
-        
+
         channel_indices = self._get_selected_indices(self.channel_list)
         if not channel_indices:
             notifications.show_warning("No channels selected")
             return
         channels = [self.metadata.channel_ids[i] for i in channel_indices]
-        
+
         z_indices = self._get_selected_indices(self.z_list)
         if not z_indices:
             notifications.show_warning("No Z-slices selected")
             return
         z_slices = [self.metadata.planes[i] for i in z_indices]
-        
-        # Show loading message
+
+        # Show loading message (use letter notation in message)
         notifications.show_info(f"Loading data for well {well_str}...")
-        
+
         try:
             # Load data (without saving)
             data, metadata = self.reader.read_data(
@@ -595,27 +611,27 @@ class PhenixDataLoaderWidget(QWidget):
                 channels=channels,
                 z_slices=z_slices
             )
-            
+
             # Store data and metadata for saving later
             self.current_data = data
             self.current_metadata = metadata
-            
+
             # Enable save button now that data is loaded
             self.save_btn.setEnabled(True)
-            
+
             # Clear existing layers and remove overlay
             self._remove_timestamp_overlay()
             self.viewer.layers.clear()
-            
+
             # Visualize data
             self._add_layers_to_viewer(data, metadata)
-            
+
             # Re-enable timestamp if checkbox is checked
             if self.timestamp_checkbox.isChecked():
                 self._add_timestamp_overlay()
-            
+
             notifications.show_info("Data loaded successfully!")
-            
+
         except Exception as e:
             notifications.show_error(f"Error loading data: {str(e)}")
             import traceback
@@ -628,7 +644,7 @@ class PhenixDataLoaderWidget(QWidget):
         pixel_size_x = metadata['pixel_size']['x'] * 1e6
         pixel_size_y = metadata['pixel_size']['y'] * 1e6
         z_step = metadata['z_step'] * 1e6 if metadata['z_step'] is not None else 1.0
-        
+
         # Color mapping
         color_map = {
             'Brightfield': 'gray',
@@ -645,11 +661,11 @@ class PhenixDataLoaderWidget(QWidget):
             'Cy3': 'yellow',
         }
         default_colors = ['cyan', 'magenta', 'yellow', 'green', 'red', 'blue']
-        
+
         # Add each channel
         for ch_idx, (ch_id, ch_info) in enumerate(channels_info.items()):
             ch_name = ch_info['name']
-            
+
             # Select color
             color = None
             for key, value in color_map.items():
@@ -658,7 +674,7 @@ class PhenixDataLoaderWidget(QWidget):
                     break
             if color is None:
                 color = default_colors[ch_idx % len(default_colors)]
-            
+
             # Get channel data
             if data.shape[0] > 1:
                 channel_data = data[:, ch_idx, :, :, :]
@@ -666,14 +682,14 @@ class PhenixDataLoaderWidget(QWidget):
             else:
                 channel_data = data[0, ch_idx, :, :, :]
                 scale = (z_step, pixel_size_y, pixel_size_x)
-            
+
             # Calculate contrast limits
             nonzero_data = channel_data[channel_data > 0]
             if len(nonzero_data) > 0:
                 contrast_limits = [0, np.percentile(nonzero_data, 99.5)]
             else:
                 contrast_limits = [0, 1]
-            
+
             # Add to viewer
             self.viewer.add_image(
                 channel_data,
@@ -683,18 +699,18 @@ class PhenixDataLoaderWidget(QWidget):
                 scale=scale,
                 contrast_limits=contrast_limits
             )
-        
-        # Update viewer title
-        well = metadata['well']
+
+        # Update viewer title - metadata['well'] now contains letter notation
+        well = metadata['well']  # e.g., "A03"
         if metadata['stitched']:
             title = f"{metadata['plate_id']} - {well} - Stitched"
         else:
             title = f"{metadata['plate_id']} - {well} - Field {metadata['fields'][0]}"
         self.viewer.title = title
-        
+
         # Enable scale bar
         self.viewer.scale_bar.visible = True
         self.viewer.scale_bar.unit = "µm"
-        
+
         # Reset view
         self.viewer.reset_view()

@@ -69,6 +69,40 @@ class OperaPhenixReader:
         self.image_index = self._build_image_index()
         self.well_field_map = self._build_well_field_map()
 
+    @staticmethod
+    def row_to_letter(row_num: int) -> str:
+        """
+        Convert numeric row index to letter notation.
+        
+        Parameters
+        ----------
+        row_num : int
+            1-based row number (1, 2, 3, ...)
+        
+        Returns
+        -------
+        str
+            Letter notation ('A', 'B', 'C', ...)
+        """
+        return chr(ord('A') + row_num - 1)
+    
+    @staticmethod
+    def letter_to_row(letter: str) -> int:
+        """
+        Convert letter row notation to numeric index.
+        
+        Parameters
+        ----------
+        letter : str
+            Row letter ('A', 'B', 'C', ...)
+        
+        Returns
+        -------
+        int
+            1-based row number (1, 2, 3, ...)
+        """
+        return ord(letter.upper()) - ord('A') + 1
+
     def _detect_structure(self):
         """
         Detect whether this is export or archive format and set paths accordingly.
@@ -437,23 +471,31 @@ class OperaPhenixReader:
         total_images = len(self.image_index)
         print(f"  Calculation: {total_images:,} images × {img_h}×{img_w} pixels × {bytes_per_pixel} bytes/pixel")
 
+        # Convert well IDs to letter notation
+        wells_letter = []
+        for well_id in self.metadata.wells:
+            row_num, col_num = int(well_id[:2]), int(well_id[2:])
+            row_letter = self.row_to_letter(row_num)
+            wells_letter.append(f"{row_letter}{col_num:02d}")
+
         print(f"\nWells with data: {len(self.metadata.wells)}")
-        print(f"  Wells: {', '.join(self.metadata.wells)}")
+        print(f"  Wells: {', '.join(wells_letter)}")
 
         print(f"\nFields per well:")
         for well_id in self.metadata.wells:
             row, col = int(well_id[:2]), int(well_id[2:])
+            row_letter = self.row_to_letter(row)
             fields = self.well_field_map.get((row, col), [])
-            print(f"  r{row:02d}c{col:02d}: {len(fields)} fields ({min(fields) if fields else 'N/A'}-{max(fields) if fields else 'N/A'})")
+            print(f"  {row_letter}{col:02d}: {len(fields)} fields ({min(fields) if fields else 'N/A'}-{max(fields) if fields else 'N/A'})")
 
         print(f"\nTimepoints: {len(self.metadata.timepoints)} ({min(self.metadata.timepoints)}-{max(self.metadata.timepoints)})")
-        
+
         # Add time information
         if len(self.metadata.timepoint_offsets) > 0:
             time_increments = np.diff(self.metadata.timepoint_offsets)
             mean_interval = time_increments.mean() if len(time_increments) > 0 else 0.0
             total_duration = self.metadata.timepoint_offsets[-1] - self.metadata.timepoint_offsets[0] if len(self.metadata.timepoint_offsets) > 1 else 0.0
-            
+
             print(f"  First timepoint: {self.format_timepoint_label(0)}")
             print(f"  Last timepoint: {self.format_timepoint_label(len(self.metadata.timepoint_offsets) - 1)}")
             print(f"  Mean interval: {mean_interval:.1f} s ({mean_interval/60:.1f} min)")
@@ -475,7 +517,7 @@ class OperaPhenixReader:
         print("="*60 + "\n")
     
     def read_data(self,
-                row: Optional[int] = None,
+                row: Optional[Union[int, str]] = None,
                 column: Optional[int] = None,
                 field: Optional[int] = None,
                 stitch_fields: bool = False,
@@ -490,8 +532,9 @@ class OperaPhenixReader:
 
         Parameters
         ----------
-        row : int, optional
-            Well row (default: first available)
+        row : int or str, optional
+            Well row - either numeric (1, 2, 3...) or letter ('A', 'B', 'C'...)
+            (default: first available)
         column : int, optional
             Well column (default: first available)
         field : int, optional
@@ -520,6 +563,10 @@ class OperaPhenixReader:
         """
         # Print dataset overview first
         self._print_dataset_overview()
+
+        # Convert row to numeric if letter provided
+        if row is not None and isinstance(row, str):
+            row = self.letter_to_row(row)
 
         if metadata_only:
             # Set defaults for metadata preparation
@@ -750,7 +797,6 @@ class OperaPhenixReader:
                     sx = matrix[0, 0]  
                     sy = matrix[1, 1]  
 
-                    # Apply INVERSE scale (divide instead of multiply)
                     pos_x_corrected = pos[0] / sx
                     pos_y_corrected = pos[1] / sy  # sy is negative, so this flips Y
 
@@ -887,32 +933,36 @@ class OperaPhenixReader:
         return data
     
     def _prepare_metadata_dict(self, row: int, col: int, fields: List[int],
-                               timepoints: List[int], channels: List[int],
-                               z_slices: List[int], stitched: bool,
-                               shape: Tuple) -> Dict:
+                            timepoints: List[int], channels: List[int],
+                            z_slices: List[int], stitched: bool,
+                            shape: Tuple) -> Dict:
         """Prepare metadata dictionary for output"""
         channel_info = {ch: self.metadata.channels[ch] for ch in channels}
-        
+
         # Get time offsets for selected timepoints (convert to 0-based indexing)
         selected_time_offsets = []
         for tp in timepoints:
             tp_idx = tp - 1  # Convert TimepointID to 0-based index
             if 0 <= tp_idx < len(self.metadata.timepoint_offsets):
                 selected_time_offsets.append(float(self.metadata.timepoint_offsets[tp_idx]))
-        
+
         # Calculate time increment if multiple timepoints
         time_increment = None
         if len(selected_time_offsets) > 1:
             increments = np.diff(selected_time_offsets)
             time_increment = float(increments.mean())
-        
+
+        # Convert row to letter notation
+        row_letter = self.row_to_letter(row)
+
         metadata = {
             'plate_id': self.metadata.plate_id,
             'plate_layout': {
                 'rows': self.metadata.plate_rows,
                 'columns': self.metadata.plate_columns
             },
-            'well': f"r{row:02d}c{col:02d}",
+            'well': f"{row_letter}{col:02d}",
+            'well_numeric': f"r{row:02d}c{col:02d}",  # Keep numeric for compatibility
             'shape': {
                 'description': 'T, C, Z, Y, X',
                 'dimensions': shape
