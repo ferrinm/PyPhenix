@@ -193,7 +193,7 @@ def test_add_layers_creates_image_layers(widget_with_viewer):
     layer = viewer.layers[0]
     assert layer.name.startswith('Ch1')
     assert 'DAPI' in layer.name
-    assert layer.colormap.name == 'blue'
+    assert layer.colormap.name == 'cyan'
 
 
 def test_set_controls_enabled(widget_with_viewer):
