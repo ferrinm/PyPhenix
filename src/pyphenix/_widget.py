@@ -185,11 +185,19 @@ class PhenixDataLoaderWidget(QWidget):
         display_group = CollapsibleGroupBox("Display Options")
         display_layout = QVBoxLayout()
         
+        self.ffc_checkbox = QCheckBox("Apply flat field correction")
+        self.ffc_checkbox.setChecked(True)  # Default to True
+        self.ffc_checkbox.setToolTip(
+            "Apply flat field correction to remove vignetting and illumination non-uniformity.\n"
+            "Requires FFC profiles in the experiment directory."
+        )
+        display_layout.addWidget(self.ffc_checkbox)
+
         self.timestamp_checkbox = QCheckBox("Show timepoint timestamp")
         self.timestamp_checkbox.setChecked(False)
         self.timestamp_checkbox.stateChanged.connect(self._on_timestamp_toggle)
         display_layout.addWidget(self.timestamp_checkbox)
-        
+
         display_group.setLayout(display_layout)
         layout.addWidget(display_group)
         
@@ -297,31 +305,54 @@ class PhenixDataLoaderWidget(QWidget):
     def _load_experiment(self):
         """Load the selected experiment."""
         exp_path = self.path_input.text()
-        
+
         if not exp_path:
             notifications.show_warning("Please select an experiment directory")
             return
-        
+
         try:
             self.reader = OperaPhenixReader(exp_path)
             self.metadata = self.reader.metadata
-            
+
+            # Check if FFC profiles were loaded
+            ffc_status = ""
+            if self.reader.ffc_profiles:
+                n_profiles = len(self.reader.ffc_profiles)
+                n_with_correction = sum(1 for p in self.reader.ffc_profiles.values() 
+                                    if p.has_correction())
+                ffc_status = f"<br>FFC profiles: {n_with_correction}/{n_profiles} channels"
+
+                # Enable FFC checkbox
+                self.ffc_checkbox.setEnabled(True)
+                self.ffc_checkbox.setToolTip(
+                    f"Apply flat field correction to remove vignetting.\n"
+                    f"Found corrections for {n_with_correction} channel(s)."
+                )
+            else:
+                ffc_status = "<br><i>No FFC profiles found</i>"
+
+                # Disable and uncheck FFC checkbox
+                self.ffc_checkbox.setEnabled(False)
+                self.ffc_checkbox.setChecked(False)
+                self.ffc_checkbox.setToolTip("No flat field correction profiles found in experiment")
+
             # Update UI with experiment info
             self.exp_info_label.setText(
                 f"<b>Loaded:</b> {Path(exp_path).name}<br>"
                 f"Wells: {len(self.metadata.wells)} | "
                 f"Channels: {len(self.metadata.channels)}"
+                f"{ffc_status}"
             )
-            
+
             # Populate selectors
             self._populate_selectors()
-            
+
             # Enable controls
             self._set_controls_enabled(True)
             self.visualize_btn.setEnabled(True)
-            
+
             notifications.show_info("Experiment loaded successfully!")
-            
+
         except Exception as e:
             notifications.show_error(f"Error loading experiment: {str(e)}")
             import traceback
@@ -373,6 +404,12 @@ class PhenixDataLoaderWidget(QWidget):
         self.channel_clear_all_btn.setEnabled(enabled)
         self.z_select_all_btn.setEnabled(enabled)
         self.z_clear_all_btn.setEnabled(enabled)
+
+        # Only enable FFC if profiles are available
+        if enabled and self.reader and self.reader.ffc_profiles:
+            self.ffc_checkbox.setEnabled(True)
+        else:
+            self.ffc_checkbox.setEnabled(False)
     
     def _on_well_changed(self):
         """Handle well selection change."""
@@ -597,8 +634,12 @@ class PhenixDataLoaderWidget(QWidget):
             return
         z_slices = [self.metadata.planes[i] for i in z_indices]
 
+        # Get FFC checkbox state
+        apply_ffc = self.ffc_checkbox.isChecked()
+
         # Show loading message (use letter notation in message)
-        notifications.show_info(f"Loading data for well {well_str}...")
+        ffc_msg = " (with FFC)" if apply_ffc else " (without FFC)"
+        notifications.show_info(f"Loading data for well {well_str}{ffc_msg}...")
 
         try:
             # Load data (without saving)
@@ -609,7 +650,8 @@ class PhenixDataLoaderWidget(QWidget):
                 stitch_fields=stitch,
                 timepoints=timepoints,
                 channels=channels,
-                z_slices=z_slices
+                z_slices=z_slices,
+                apply_ffc=apply_ffc  # Add this parameter
             )
 
             # Store data and metadata for saving later
@@ -648,12 +690,13 @@ class PhenixDataLoaderWidget(QWidget):
         # Color mapping
         color_map = {
             'Brightfield': 'gray',
-            'DAPI': 'blue',
-            'Hoechst': 'blue',
+            'DAPI': 'cyan',
+            'Hoechst': 'cyan',
             'Alexa 488': 'green',
             'GFP': 'green',
             'EGFP': 'green',
             'Alexa 555': 'yellow',
+            'Alexa 568': 'yellow',
             'mCherry': 'magenta',
             'mStrawberry': 'magenta',
             'Alexa 647': 'magenta',

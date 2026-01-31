@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 from PIL import Image
 import re
+import ast
 from dataclasses import dataclass
 import json
 import warnings
@@ -28,6 +29,225 @@ class PhenixMetadata:
     channel_ids: List[int]
     orientation_matrix: Optional[np.ndarray] = None
 
+class FFCProfile:
+    """Container for flat field correction profile"""
+    def __init__(self, channel_id: int, ffc_data: dict):
+        self.channel_id = channel_id
+        self.character = ffc_data.get('Character', 'Null')
+        self.mean = ffc_data.get('Mean', np.nan)
+        self.quality = ffc_data.get('Quality', 0.0)
+        
+        profile = ffc_data.get('Profile', {})
+        self.profile_type = profile.get('Type', 'Identity')
+        
+        if self.profile_type == 'Polynomial':
+            self.coefficients = profile.get('Coefficients', [])
+            self.dims = profile.get('Dims', [1080, 1080])
+            self.origin = profile.get('Origin', [539.5, 539.5])
+            self.scale = profile.get('Scale', [1.0, 1.0])
+        else:
+            self.coefficients = None
+            self.dims = None
+            self.origin = None
+            self.scale = None
+    
+    def has_correction(self) -> bool:
+        """Check if this profile has actual correction data"""
+        return (self.profile_type == 'Polynomial' and 
+                self.coefficients is not None and
+                self.character == 'NonFlat')
+    
+    def generate_correction_image(self, shape: Tuple[int, int]) -> np.ndarray:
+        """
+        Generate the flat field correction image.
+
+        Parameters
+        ----------
+        shape : tuple of int
+            Output image shape (height, width) in (rows, cols) = (Y, X)
+
+        Returns
+        -------
+        np.ndarray
+            Correction multiplier image (1.0 = no correction)
+        """
+        if not self.has_correction():
+            return np.ones(shape, dtype=np.float32)
+
+        h, w = shape  # h = rows (Y), w = cols (X)
+
+        # Create coordinate arrays
+        # Opera Phenix uses image convention:
+        #   origin[0] = Y center (row)
+        #   origin[1] = X center (col)
+        #   scale[0] = Y scale
+        #   scale[1] = X scale
+        y_coords = np.arange(h, dtype=np.float32) - self.origin[0]
+        x_coords = np.arange(w, dtype=np.float32) - self.origin[1]
+
+        # Scale coordinates
+        y_coords = y_coords * self.scale[0]
+        x_coords = x_coords * self.scale[1]
+
+        # Create meshgrid
+        # X[i,j] gives x-coordinate at row i, col j
+        # Y[i,j] gives y-coordinate at row i, col j
+        X, Y = np.meshgrid(x_coords, y_coords)
+
+        # Evaluate polynomial: sum over orders n, then over terms within each order
+        # SWAPPED: Try Y^k * X^(n-k) instead of X^k * Y^(n-k)
+        # This accounts for row-major polynomial convention
+        correction = np.zeros_like(X, dtype=np.float32)
+
+        for n, coeffs in enumerate(self.coefficients):
+            for k, coeff in enumerate(coeffs):
+                # Swap: y^k * x^(n-k) instead of x^k * y^(n-k)
+                correction += coeff * np.power(Y, k) * np.power(X, n - k)
+
+        return correction
+
+def parse_ffc_string(ffc_str: str) -> dict:
+    """
+    Parse the FFC profile string format.
+    
+    The string is formatted like:
+    {Background: {Character: NonFlat, Mean: 153.32502, ...}, Channel: 1, ...}
+    
+    This is a custom format that needs careful parsing.
+    """
+    bg_result = {}  # Will hold the Background section data
+    
+    # Remove outer braces
+    ffc_str = ffc_str.strip()
+    if not ffc_str.startswith('{') or not ffc_str.endswith('}'):
+        return {'Background': bg_result}
+    
+    # Find Background section
+    bg_start = ffc_str.find('Background:')
+    if bg_start == -1:
+        return {'Background': bg_result}
+    
+    # Find the opening brace after 'Background:'
+    brace_start = ffc_str.find('{', bg_start)
+    if brace_start == -1:
+        return {'Background': bg_result}
+    
+    # Find matching closing brace by counting
+    brace_count = 0
+    brace_end = -1
+    for i in range(brace_start, len(ffc_str)):
+        if ffc_str[i] == '{':
+            brace_count += 1
+        elif ffc_str[i] == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                brace_end = i
+                break
+    
+    if brace_end == -1:
+        return {'Background': bg_result}
+    
+    # Extract Background content (everything between the braces)
+    bg_content = ffc_str[brace_start+1:brace_end]
+    
+    # Extract Character
+    char_match = re.search(r'Character:\s*(\w+)', bg_content)
+    if char_match:
+        bg_result['Character'] = char_match.group(1)
+    
+    # Extract Mean
+    mean_match = re.search(r'Mean:\s*([\d.]+|NaN)', bg_content)
+    if mean_match:
+        mean_val = mean_match.group(1)
+        bg_result['Mean'] = float(mean_val) if mean_val != 'NaN' else np.nan
+    
+    # Extract Quality
+    quality_match = re.search(r'Quality:\s*([\d.]+)', bg_content)
+    if quality_match:
+        bg_result['Quality'] = float(quality_match.group(1))
+    
+    # Extract NoiseConst if present
+    noise_match = re.search(r'NoiseConst:\s*([\d.]+)', bg_content)
+    if noise_match:
+        bg_result['NoiseConst'] = float(noise_match.group(1))
+    
+    # Extract Profile section using the same brace-counting method
+    profile_start = bg_content.find('Profile:')
+    if profile_start != -1:
+        # Find the opening brace after 'Profile:'
+        profile_brace_start = bg_content.find('{', profile_start)
+        if profile_brace_start != -1:
+            # Find matching closing brace
+            brace_count = 0
+            profile_brace_end = -1
+            for i in range(profile_brace_start, len(bg_content)):
+                if bg_content[i] == '{':
+                    brace_count += 1
+                elif bg_content[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        profile_brace_end = i
+                        break
+            
+            if profile_brace_end != -1:
+                profile_content = bg_content[profile_brace_start+1:profile_brace_end]
+                profile_dict = {}
+                
+                # Type
+                type_match = re.search(r'Type:\s*(\w+)', profile_content)
+                if type_match:
+                    profile_dict['Type'] = type_match.group(1)
+                
+                # For Polynomial type, extract the arrays
+                if profile_dict.get('Type') == 'Polynomial':
+                    # Coefficients - use a more flexible pattern
+                    # Match everything between Coefficients: and the next comma followed by a capital letter key
+                    coeff_match = re.search(r'Coefficients:\s*(\[\[.*?\]\])(?=\s*,\s*[A-Z])', profile_content, re.DOTALL)
+                    if coeff_match:
+                        try:
+                            coeff_str = coeff_match.group(1)
+                            profile_dict['Coefficients'] = ast.literal_eval(coeff_str)
+                        except Exception as e:
+                            print(f"    ERROR parsing Coefficients: {e}")
+                            print(f"    Coefficients string: {coeff_match.group(1)[:200]}")
+                    else:
+                        # Try alternate pattern - match until next key or end
+                        coeff_match = re.search(r'Coefficients:\s*(\[\[[\d\s.,\-]+\]\])', profile_content, re.DOTALL)
+                        if coeff_match:
+                            try:
+                                coeff_str = coeff_match.group(1)
+                                profile_dict['Coefficients'] = ast.literal_eval(coeff_str)
+                            except Exception as e:
+                                print(f"    ERROR parsing Coefficients (alternate): {e}")
+                    
+                    # Dims
+                    dims_match = re.search(r'Dims:\s*(\[[^\]]+\])', profile_content)
+                    if dims_match:
+                        try:
+                            profile_dict['Dims'] = ast.literal_eval(dims_match.group(1))
+                        except:
+                            pass
+                    
+                    # Origin
+                    origin_match = re.search(r'Origin:\s*(\[[^\]]+\])', profile_content)
+                    if origin_match:
+                        try:
+                            profile_dict['Origin'] = ast.literal_eval(origin_match.group(1))
+                        except:
+                            pass
+                    
+                    # Scale
+                    scale_match = re.search(r'Scale:\s*(\[[^\]]+\])', profile_content)
+                    if scale_match:
+                        try:
+                            profile_dict['Scale'] = ast.literal_eval(scale_match.group(1))
+                        except:
+                            pass
+                
+                bg_result['Profile'] = profile_dict
+    
+    # Wrap in 'Background' key to match expected structure
+    return {'Background': bg_result}
 
 class OperaPhenixReader:
     """
@@ -68,6 +288,171 @@ class OperaPhenixReader:
         self.metadata = self._parse_metadata()
         self.image_index = self._build_image_index()
         self.well_field_map = self._build_well_field_map()
+         
+        # Load flat field correction profiles
+        self.ffc_profiles = self._load_ffc_profiles()
+    
+    def _detect_ffc_path(self) -> Optional[Path]:
+        """
+        Detect the FFC profile XML file location.
+
+        Returns
+        -------
+        Path or None
+            Path to FFC XML file, or None if not found
+        """
+        # For export format: FFC_Profile/FFC_Profile_*.xml
+        export_ffc_dir = self.experiment_path / "FFC_Profile"
+        if export_ffc_dir.exists() and export_ffc_dir.is_dir():
+            # Use iterdir() instead of glob() to handle spaces in filenames
+            for item in export_ffc_dir.iterdir():
+                if item.is_file() and item.suffix.lower() == '.xml':
+                    return item
+
+        # For archive format: flatfieldcorrection/*.xml
+        archive_ffc_dir = self.experiment_path / "flatfieldcorrection"
+        if archive_ffc_dir.exists() and archive_ffc_dir.is_dir():
+            for item in archive_ffc_dir.iterdir():
+                if item.is_file() and item.suffix.lower() == '.xml':
+                    return item
+
+        # Try case-insensitive directory search
+        if self.experiment_path.exists():
+            for item in self.experiment_path.iterdir():
+                if item.is_dir():
+                    # Check if directory name contains 'ffc' or 'flatfield'
+                    name_lower = item.name.lower()
+                    if 'ffc' in name_lower or 'flatfield' in name_lower:
+                        # Look for XML files in this directory
+                        for subitem in item.iterdir():
+                            if subitem.is_file() and subitem.suffix.lower() == '.xml':
+                                return subitem
+
+        return None
+    
+    def _load_ffc_profiles(self) -> Dict[int, FFCProfile]:
+        """
+        Load flat field correction profiles from XML.
+
+        Returns
+        -------
+        dict
+            Dictionary mapping channel_id to FFCProfile
+        """
+        ffc_path = self._detect_ffc_path()
+        if ffc_path is None:
+            print("No flat field correction profiles found.")
+            return {}
+
+        print(f"Loading FFC profiles from: {ffc_path.name}")
+
+        try:
+            with open(ffc_path, 'r', encoding='utf-8') as f:
+                xml_content = f.read()
+
+            # Parse XML
+            tree = ET.parse(ffc_path)
+            root = tree.getroot()
+
+            # Parse namespace
+            ns_match = re.match(r'\{(.+)\}', root.tag)
+            if ns_match:
+                ns = {'ns': ns_match.group(1)}
+            else:
+                ns = {}
+
+            profiles = {}
+
+            # Find all Map/Entry elements
+            if ns:
+                entries = root.findall('.//ns:Map/ns:Entry', ns)
+            else:
+                entries = root.findall('.//Map/Entry')
+
+            print(f"  Found {len(entries)} entries in XML")
+
+            for entry in entries:
+                channel_id = int(entry.get('ChannelID'))
+                print(f"\n  Processing Channel {channel_id}:")
+
+                # Get FlatfieldProfile element
+                if ns:
+                    ffc_elem = entry.find('ns:FlatfieldProfile', ns)
+                else:
+                    ffc_elem = entry.find('FlatfieldProfile')
+
+                if ffc_elem is not None and ffc_elem.text:
+                    # Parse the custom format string
+                    ffc_data = parse_ffc_string(ffc_elem.text)
+
+                    # Extract Background section
+                    if 'Background' in ffc_data:
+                        bg_data = ffc_data['Background']
+                        profiles[channel_id] = FFCProfile(channel_id, bg_data)
+                        print(f"    Created FFCProfile")
+                    else:
+                        print(f"    WARNING: No Background section found in parsed data")
+                else:
+                    print(f"    WARNING: No FlatfieldProfile element or text found")
+
+            # Print summary
+            print(f"\n  Successfully loaded FFC profiles for {len(profiles)} channels:")
+            for ch_id, profile in profiles.items():
+                if profile.has_correction():
+                    print(f"    Channel {ch_id}: {profile.character} "
+                        f"(quality={profile.quality:.2f}, mean={profile.mean:.1f})")
+                else:
+                    print(f"    Channel {ch_id}: No correction (Identity)")
+
+            return profiles
+
+        except Exception as e:
+            print(f"Warning: Could not load FFC profiles: {e}")
+            import traceback
+            traceback.print_exc()
+            return {}
+    
+    def apply_ffc(self, data: np.ndarray, channel_ids: List[int], 
+                apply: bool = True) -> np.ndarray:
+        """
+        Apply flat field correction to image data.
+
+        Parameters
+        ----------
+        data : np.ndarray
+            Image data with shape (T, C, Z, Y, X)
+        channel_ids : list of int
+            List of channel IDs corresponding to C dimension
+        apply : bool, default True
+            Whether to actually apply correction (False = just return original)
+
+        Returns
+        -------
+        np.ndarray
+            Corrected image data (same shape as input, dtype=float32)
+        """
+        if not apply or not self.ffc_profiles:
+            return data
+
+        # Convert to float32 for correction
+        corrected = data.astype(np.float32)
+
+        for c_idx, ch_id in enumerate(channel_ids):
+            if ch_id in self.ffc_profiles:
+                profile = self.ffc_profiles[ch_id]
+
+                if profile.has_correction():
+                    # Generate illumination profile
+                    img_shape = data.shape[-2:]  # (Y, X)
+                    illumination = profile.generate_correction_image(img_shape)
+
+                    # DIVIDE by illumination to correct vignetting
+                    # This reduces bright center and brightens dark edges
+                    corrected[:, c_idx, :, :, :] /= illumination[np.newaxis, np.newaxis, :, :]
+
+                    print(f"  Applied FFC to channel {ch_id} (divided by illumination profile)")
+
+        return corrected
 
     @staticmethod
     def row_to_letter(row_num: int) -> str:
@@ -525,6 +910,7 @@ class OperaPhenixReader:
                 channels: Optional[Union[int, List[int]]] = None,
                 z_slices: Optional[Union[int, List[int]]] = None,
                 metadata_only: bool = False,
+                apply_ffc: bool = True,
                 output_file: Optional[str] = None,
                 output_format: Optional[str] = None) -> Tuple[np.ndarray, Dict]:
         """
@@ -549,6 +935,8 @@ class OperaPhenixReader:
             Z plane(s) to read (default: all)
         metadata_only : bool, default False
             If True, only print metadata without loading image data
+        apply_ffc : bool, default True
+            Whether to apply flat field correction if available
         output_file : str, optional
             Path to save output file
         output_format : str, optional
@@ -672,20 +1060,33 @@ class OperaPhenixReader:
         
         # Read images
         if stitch_fields:
+            # Pass apply_ffc parameter to stitching function
             data = self._read_and_stitch(row, column, fields, timepoints, 
-                                        channels, z_slices)
+                                        channels, z_slices, apply_ffc=apply_ffc)
+            ffc_applied_during_stitch = apply_ffc and self.ffc_profiles
         else:
             data = self._read_images(row, column, fields, timepoints,
-                                   channels, z_slices)
-        
+                                channels, z_slices)
+            ffc_applied_during_stitch = False
+
         # Prepare metadata dictionary
         metadata_dict = self._prepare_metadata_dict(
             row, column, fields, timepoints, channels, z_slices, 
             stitch_fields, data.shape
         )
-        
+
         # Print metadata
         self._print_metadata(metadata_dict)
+
+        if not metadata_only and data is not None:
+            # Apply flat field correction (only if not already applied during stitching)
+            if apply_ffc and self.ffc_profiles and not ffc_applied_during_stitch:
+                print("\nApplying flat field correction...")
+                data = self.apply_ffc(data, channels, apply=True)
+            elif ffc_applied_during_stitch:
+                print("\nFlat field correction was applied during stitching.")
+            elif not self.ffc_profiles:
+                print("\nNo flat field correction profiles available.")
         
         # Save output if requested
         if output_file is not None and output_format is not None:
@@ -782,8 +1183,32 @@ class OperaPhenixReader:
 
     def _read_and_stitch(self, row: int, col: int, fields: List[int],
                         timepoints: List[int], channels: List[int],
-                        z_slices: List[int]) -> np.ndarray:
-        """Read and stitch multiple fields"""
+                        z_slices: List[int], apply_ffc: bool = True) -> np.ndarray:
+        """
+        Read and stitch multiple fields.
+
+        Parameters
+        ----------
+        row : int
+            Well row number
+        col : int
+            Well column number
+        fields : List[int]
+            List of field IDs to stitch
+        timepoints : List[int]
+            List of timepoint IDs
+        channels : List[int]
+            List of channel IDs
+        z_slices : List[int]
+            List of z-slice IDs
+        apply_ffc : bool, default True
+            Whether to apply flat field correction before stitching
+
+        Returns
+        -------
+        np.ndarray
+            Stitched image data (T, C, Z, Y, X) as float32
+        """
         # Get field positions
         field_positions = {}
         for field in fields:
@@ -855,16 +1280,31 @@ class OperaPhenixReader:
         print(f"  Stitched size: {stitched_h} × {stitched_w} pixels")
         print(f"  Field positions:")
 
-        # Initialize stitched array
+        # Initialize stitched array - USE FLOAT32 from the start
         n_time = len(timepoints)
         n_channels = len(channels)
         n_z = len(z_slices)
 
         data = np.zeros((n_time, n_channels, n_z, stitched_h, stitched_w),
-                    dtype=np.uint16)
+                    dtype=np.float32)  # Changed from uint16 to float32
 
         # Track missing images
         missing_images = []
+
+        # Generate FFC correction images once per channel (ONLY if apply_ffc is True)
+        ffc_corrections = {}
+        if apply_ffc and self.ffc_profiles:
+            print(f"  Generating FFC corrections for stitching...")
+            for ch_idx, ch_id in enumerate(channels):
+                if ch_id in self.ffc_profiles:
+                    profile = self.ffc_profiles[ch_id]
+                    if profile.has_correction():
+                        ffc_corrections[ch_id] = profile.generate_correction_image((img_h, img_w))
+                        print(f"    Channel {ch_id}: FFC will be applied")
+        elif not apply_ffc:
+            print(f"  FFC disabled by user - no corrections will be applied")
+        elif not self.ffc_profiles:
+            print(f"  No FFC profiles available")
 
         # Stitch images with maximum intensity projection for overlaps
         for t_idx, timepoint in enumerate(timepoints):
@@ -877,7 +1317,12 @@ class OperaPhenixReader:
                             img_path = self._construct_image_path(relative_url, row, col)
 
                             if img_path.exists():
-                                img = np.array(Image.open(img_path))
+                                # Load image as float32
+                                img = np.array(Image.open(img_path), dtype=np.float32)
+
+                                # Apply FFC to this field BEFORE stitching (only if enabled)
+                                if channel in ffc_corrections:
+                                    img /= ffc_corrections[channel]
 
                                 # Calculate position in stitched image with rounding
                                 pos = field_positions[field]
