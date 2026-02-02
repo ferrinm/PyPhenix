@@ -621,8 +621,10 @@ class PhenixDataLoaderWidget(QWidget):
                 minutes = int((seconds % 3600) // 60)
                 secs = int(seconds % 60)
 
-                # Create timestamp with frame number
-                timestamp_str = f"Frame {time_idx + 1}/{len(self.current_metadata['timepoint_offsets'])}\nT = {hours:02d}:{minutes:02d}:{secs:02d}"
+                # Create timestamp
+                timestamp_str = f"{hours:02d}:{minutes:02d}:{secs:02d} (HH:MM:SS)"
+                # version with total frames; I don't think I like this
+                #timestamp_str = f"Frame {time_idx + 1}/{len(self.current_metadata['timepoint_offsets'])}\n{hours:02d}:{minutes:02d}:{secs:02d} (HH:MM:SS)"
 
                 # Update overlay with styling
                 self.viewer.text_overlay.text = timestamp_str
@@ -631,7 +633,7 @@ class PhenixDataLoaderWidget(QWidget):
                 self.viewer.text_overlay.position = 'top_right'
                 self.viewer.text_overlay.visible = True
             else:
-                self.viewer.text_overlay.text = "T = --:--:--"
+                self.viewer.text_overlay.text = "--:--:--"
                 self.viewer.text_overlay.position = 'top_right'
                 self.viewer.text_overlay.visible = True
         else:
@@ -641,7 +643,7 @@ class PhenixDataLoaderWidget(QWidget):
                 hours = int(seconds // 3600)
                 minutes = int((seconds % 3600) // 60)
                 secs = int(seconds % 60)
-                timestamp_str = f"Single timepoint\nT = {hours:02d}:{minutes:02d}:{secs:02d}"
+                timestamp_str = f"Single timepoint\n{hours:02d}:{minutes:02d}:{secs:02d}"
                 self.viewer.text_overlay.text = timestamp_str
                 self.viewer.text_overlay.position = 'top_right'
                 self.viewer.text_overlay.visible = True
