@@ -6,6 +6,7 @@ except ImportError:
 from ._reader import napari_get_reader, OperaPhenixReader
 from ._widget import PhenixDataLoaderWidget
 
+import napari
 def launch_viewer(experiment_path=None):
     """
     Launch napari viewer with pyphenix widget.

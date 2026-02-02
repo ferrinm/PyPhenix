@@ -5,25 +5,117 @@ from pathlib import Path
 from typing import List
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QComboBox, QListWidget, QLabel, QCheckBox,
+                            QFrame, QToolButton, QSizePolicy,
                             QGroupBox, QAbstractItemView, QLineEdit, QFileDialog,
                             QScrollArea)
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 
 from ._reader import OperaPhenixReader
 
-class CollapsibleGroupBox(QGroupBox):
-    """A collapsible group box."""
+class CollapsibleSection(QWidget):
+    """A collapsible section with arrow indicator."""
     
-    def __init__(self, title="", parent=None):
-        super().__init__(title, parent)
-        self.setCheckable(True)
-        self.setChecked(True)
-        self.toggled.connect(self._on_toggle)
+    def __init__(self, title="", parent=None, animation_duration=200):
+        super().__init__(parent)
         
-    def _on_toggle(self, checked):
-        """Show/hide content when toggled."""
-        for child in self.findChildren(QWidget):
-            child.setVisible(checked)
+        self.animation_duration = animation_duration
+        self.is_collapsed = False
+        
+        # Create main layout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Header frame with background
+        header_frame = QFrame()
+        header_frame.setFrameShape(QFrame.StyledPanel)
+        header_frame.setStyleSheet("""
+            QFrame {
+                background-color: palette(midlight);
+                border: 1px solid palette(mid);
+                border-radius: 3px;
+            }
+            QFrame:hover {
+                background-color: palette(light);
+            }
+        """)
+        
+        # Header layout
+        header_layout = QHBoxLayout(header_frame)
+        header_layout.setContentsMargins(5, 3, 5, 3)
+        
+        # Toggle button with arrow
+        self.toggle_button = QToolButton()
+        self.toggle_button.setStyleSheet("QToolButton { border: none; }")
+        self.toggle_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self.toggle_button.setArrowType(Qt.DownArrow)  # Start expanded
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(False)
+        self.toggle_button.clicked.connect(self.toggle)
+        
+        # Title label
+        self.title_label = QLabel(title)
+        font = self.title_label.font()
+        font.setBold(True)
+        self.title_label.setFont(font)
+        
+        header_layout.addWidget(self.toggle_button)
+        header_layout.addWidget(self.title_label)
+        header_layout.addStretch()
+        
+        # Make entire header clickable
+        header_frame.mousePressEvent = lambda event: self.toggle()
+        header_frame.setCursor(Qt.PointingHandCursor)
+        
+        # Content widget - THIS IS KEY: make it publicly accessible
+        self.content_widget = QWidget()
+        # Don't create content_layout here - let setContentLayout do it
+        
+        # Add to main layout
+        main_layout.addWidget(header_frame)
+        main_layout.addWidget(self.content_widget)
+        
+        # Animation for smooth collapse/expand
+        self.animation = QPropertyAnimation(self.content_widget, b"maximumHeight")
+        self.animation.setDuration(self.animation_duration)
+        self.animation.setEasingCurve(QEasingCurve.InOutQuad)
+        
+        # Start expanded
+        self.content_widget.setVisible(True)
+        self.content_widget.setMaximumHeight(16777215)  # Max int
+    
+    def toggle(self):
+        """Toggle the collapsed state with animation."""
+        self.is_collapsed = not self.is_collapsed
+        
+        if self.is_collapsed:
+            # Collapse
+            self.toggle_button.setArrowType(Qt.RightArrow)
+            self.animation.setStartValue(self.content_widget.height())
+            self.animation.setEndValue(0)
+            self.animation.start()
+        else:
+            # Expand
+            self.toggle_button.setArrowType(Qt.DownArrow)
+            self.animation.setStartValue(0)
+            # Calculate actual content height
+            self.content_widget.setMaximumHeight(16777215)
+            content_height = self.content_widget.sizeHint().height()
+            self.animation.setEndValue(content_height)
+            self.animation.start()
+    
+    def setContentLayout(self, layout):
+        """
+        Set the content layout for this collapsible section.
+        
+        Parameters
+        ----------
+        layout : QLayout
+            The layout to set as the content layout
+        """
+        # Simply set the layout directly on the content widget
+        # This is the correct Qt way - let Qt handle widget ownership
+        self.content_widget.setLayout(layout)
 
 class PhenixDataLoaderWidget(QWidget):
     """Interactive widget for loading and visualizing Opera Phenix data in Napari."""
@@ -69,7 +161,7 @@ class PhenixDataLoaderWidget(QWidget):
         layout.addWidget(title)
         
         # Experiment path selector
-        path_group = CollapsibleGroupBox("Experiment Selection")
+        path_group = CollapsibleSection("Experiment Selection")
         path_layout = QVBoxLayout()
         
         path_input_layout = QHBoxLayout()
@@ -88,11 +180,11 @@ class PhenixDataLoaderWidget(QWidget):
         self.exp_info_label = QLabel("")
         path_layout.addWidget(self.exp_info_label)
         
-        path_group.setLayout(path_layout)
+        path_group.setContentLayout(path_layout)
         layout.addWidget(path_group)
         
         # Well selector
-        well_group = CollapsibleGroupBox("Well Selection")
+        well_group = CollapsibleSection("Well Selection")
         well_layout = QVBoxLayout()
         
         self.well_combo = QComboBox()
@@ -100,11 +192,11 @@ class PhenixDataLoaderWidget(QWidget):
         well_layout.addWidget(QLabel("Select Well:"))
         well_layout.addWidget(self.well_combo)
         
-        well_group.setLayout(well_layout)
+        well_group.setContentLayout(well_layout)
         layout.addWidget(well_group)
         
         # Field selector
-        field_group = CollapsibleGroupBox("Field Selection")
+        field_group = CollapsibleSection("Field Selection")
         field_layout = QVBoxLayout()
         
         self.stitch_checkbox = QCheckBox("Stitch all fields")
@@ -115,11 +207,11 @@ class PhenixDataLoaderWidget(QWidget):
         self.field_combo = QComboBox()
         field_layout.addWidget(self.field_combo)
         
-        field_group.setLayout(field_layout)
+        field_group.setContentLayout(field_layout)
         layout.addWidget(field_group)
         
         # Timepoint selector
-        time_group = CollapsibleGroupBox("Timepoint Selection")
+        time_group = CollapsibleSection("Timepoint Selection")
         time_layout = QVBoxLayout()
         
         time_buttons = QHBoxLayout()
@@ -136,11 +228,11 @@ class PhenixDataLoaderWidget(QWidget):
         self.time_list.setMaximumHeight(100)  # Limit height
         time_layout.addWidget(self.time_list)
         
-        time_group.setLayout(time_layout)
+        time_group.setContentLayout(time_layout)
         layout.addWidget(time_group)
         
         # Channel selector
-        channel_group = CollapsibleGroupBox("Channel Selection")
+        channel_group = CollapsibleSection("Channel Selection")
         channel_layout = QVBoxLayout()
         
         channel_buttons = QHBoxLayout()
@@ -157,11 +249,11 @@ class PhenixDataLoaderWidget(QWidget):
         self.channel_list.setMaximumHeight(120)  # Limit height
         channel_layout.addWidget(self.channel_list)
         
-        channel_group.setLayout(channel_layout)
+        channel_group.setContentLayout(channel_layout)
         layout.addWidget(channel_group)
         
         # Z-slice selector
-        z_group = CollapsibleGroupBox("Z-slice Selection")
+        z_group = CollapsibleSection("Z-slice Selection")
         z_layout = QVBoxLayout()
         
         z_buttons = QHBoxLayout()
@@ -178,11 +270,11 @@ class PhenixDataLoaderWidget(QWidget):
         self.z_list.setMaximumHeight(100)  # Limit height
         z_layout.addWidget(self.z_list)
         
-        z_group.setLayout(z_layout)
+        z_group.setContentLayout(z_layout)
         layout.addWidget(z_group)
         
         # Display options group
-        display_group = CollapsibleGroupBox("Display Options")
+        display_group = CollapsibleSection("Display Options")
         display_layout = QVBoxLayout()
         
         self.ffc_checkbox = QCheckBox("Apply flat field correction")
@@ -198,11 +290,11 @@ class PhenixDataLoaderWidget(QWidget):
         self.timestamp_checkbox.stateChanged.connect(self._on_timestamp_toggle)
         display_layout.addWidget(self.timestamp_checkbox)
 
-        display_group.setLayout(display_layout)
+        display_group.setContentLayout(display_layout)
         layout.addWidget(display_group)
         
         # Save options
-        save_group = CollapsibleGroupBox("Save Options")
+        save_group = CollapsibleSection("Save Options")
         save_layout = QVBoxLayout()
         
         save_path_layout = QHBoxLayout()
@@ -241,7 +333,7 @@ class PhenixDataLoaderWidget(QWidget):
         self.save_btn.setEnabled(False)
         save_layout.addWidget(self.save_btn)
         
-        save_group.setLayout(save_layout)
+        save_group.setContentLayout(save_layout)
         layout.addWidget(save_group)
         
         # Add stretch to push everything to the top
