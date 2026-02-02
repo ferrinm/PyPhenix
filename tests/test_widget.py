@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import Mock, patch
 from pathlib import Path
 
-from pyphenix._widget import PhenixDataLoaderWidget, CollapsibleGroupBox
+from pyphenix._widget import PhenixDataLoaderWidget, CollapsibleSection
 from qtpy.QtWidgets import QListWidget, QAbstractItemView
 
 
@@ -40,17 +40,127 @@ def test_widget_controls_disabled_initially(widget_with_viewer):
     assert not widget.visualize_btn.isEnabled()
 
 
-def test_collapsible_groupbox(qtbot):
-    """Test CollapsibleGroupBox functionality."""
-    group = CollapsibleGroupBox("Test Group")
-    qtbot.addWidget(group)
+def test_collapsible_section(qtbot):
+    """Test CollapsibleSection functionality."""
+    from pyphenix._widget import CollapsibleSection
+    from qtpy.QtWidgets import QVBoxLayout, QLabel
+    from qtpy.QtCore import Qt
     
-    assert group.isCheckable()
-    assert group.isChecked()  # Should be checked by default
+    section = CollapsibleSection("Test Section")
+    qtbot.addWidget(section)
     
-    # Test toggling
-    group.setChecked(False)
-    assert not group.isChecked()
+    # Check initial state - should be expanded
+    assert not section.is_collapsed
+    assert section.content_widget.isVisible()
+    assert section.toggle_button.arrowType() == Qt.DownArrow
+    
+    # Add some content to test
+    content_layout = QVBoxLayout()
+    test_label = QLabel("Test Content")
+    content_layout.addWidget(test_label)
+    section.setContentLayout(content_layout)
+    
+    # Verify content is set
+    assert section.content_widget.layout() is not None
+    
+    # Test collapsing
+    section.toggle()
+    qtbot.wait(250)  # Wait for animation to complete (200ms + buffer)
+    
+    assert section.is_collapsed
+    assert section.toggle_button.arrowType() == Qt.RightArrow
+    # Content widget height should be 0 or very small after animation
+    assert section.content_widget.height() < 10
+    
+    # Test expanding
+    section.toggle()
+    qtbot.wait(250)  # Wait for animation
+    
+    assert not section.is_collapsed
+    assert section.toggle_button.arrowType() == Qt.DownArrow
+    assert section.content_widget.isVisible()
+
+
+def test_multiple_collapsible_sections(qtbot):
+    """Test that multiple CollapsibleSections work independently."""
+    from pyphenix._widget import CollapsibleSection
+    from qtpy.QtWidgets import QVBoxLayout, QLabel, QWidget
+    from qtpy.QtCore import Qt
+    
+    # Create container with multiple sections
+    container = QWidget()
+    qtbot.addWidget(container)
+    layout = QVBoxLayout(container)
+    
+    section1 = CollapsibleSection("Section 1")
+    section2 = CollapsibleSection("Section 2")
+    
+    layout.addWidget(section1)
+    layout.addWidget(section2)
+    
+    # Add content to both
+    for section in [section1, section2]:
+        content_layout = QVBoxLayout()
+        content_layout.addWidget(QLabel("Test Content"))
+        section.setContentLayout(content_layout)
+    
+    # Both should start expanded
+    assert not section1.is_collapsed
+    assert not section2.is_collapsed
+    
+    # Collapse first section only
+    section1.toggle()
+    qtbot.wait(250)
+    
+    assert section1.is_collapsed
+    assert not section2.is_collapsed  # Second should still be expanded
+    
+    # Collapse second section
+    section2.toggle()
+    qtbot.wait(250)
+    
+    assert section1.is_collapsed
+    assert section2.is_collapsed
+    
+    # Expand first section only
+    section1.toggle()
+    qtbot.wait(250)
+    
+    assert not section1.is_collapsed
+    assert section2.is_collapsed  # Second should still be collapsed
+
+
+def test_collapsible_section_content_layout(qtbot):
+    """Test that setContentLayout properly adds content."""
+    from pyphenix._widget import CollapsibleSection
+    from qtpy.QtWidgets import QVBoxLayout, QLabel, QPushButton
+    
+    section = CollapsibleSection("Test Section")
+    qtbot.addWidget(section)
+    
+    # Create a layout with multiple widgets
+    content_layout = QVBoxLayout()
+    label1 = QLabel("Label 1")
+    label2 = QLabel("Label 2")
+    button = QPushButton("Test Button")
+    
+    content_layout.addWidget(label1)
+    content_layout.addWidget(label2)
+    content_layout.addWidget(button)
+    
+    # Set the content
+    section.setContentLayout(content_layout)
+    
+    # Verify the content widget has the layout
+    assert section.content_widget.layout() is not None
+    
+    # Verify widgets are in the content widget
+    # Find all child widgets of content_widget
+    children = section.content_widget.findChildren(QLabel)
+    assert len(children) == 2
+    
+    buttons = section.content_widget.findChildren(QPushButton)
+    assert len(buttons) == 1
 
 
 def test_select_all_helper(widget_with_viewer, qtbot):
