@@ -604,31 +604,36 @@ class PhenixDataLoaderWidget(QWidget):
         """Update timestamp overlay with current timepoint."""
         if self.current_metadata is None or self.timepoint_overlay is None:
             return
-        
+
         # Get current timepoint index from viewer
         current_step = self.viewer.dims.current_step
-        
+
         # Determine which axis is time (should be first axis if T > 1)
         if len(current_step) > 0 and len(self.current_metadata['timepoint_offsets']) > 1:
             time_idx = int(current_step[0])
-            
+
             # Get time offset for current timepoint
             if time_idx < len(self.current_metadata['timepoint_offsets']):
                 seconds = self.current_metadata['timepoint_offsets'][time_idx]
-                
-                # Format as HH:MM:SS
+
+                # Format as HH:MM:SS with label
                 hours = int(seconds // 3600)
                 minutes = int((seconds % 3600) // 60)
                 secs = int(seconds % 60)
-                
-                timestamp_str = f"{hours:02d}:{minutes:02d}:{secs:02d} (h:m:s)"
-                
-                # Update overlay
+
+                # Create timestamp with frame number
+                timestamp_str = f"Frame {time_idx + 1}/{len(self.current_metadata['timepoint_offsets'])}\nT = {hours:02d}:{minutes:02d}:{secs:02d}"
+
+                # Update overlay with styling
                 self.viewer.text_overlay.text = timestamp_str
                 self.viewer.text_overlay.color = 'white'
                 self.viewer.text_overlay.font_size = 12
+                self.viewer.text_overlay.position = 'top_right'
+                self.viewer.text_overlay.visible = True
             else:
-                self.viewer.text_overlay.text = "--:--:-- (h:m:s)"
+                self.viewer.text_overlay.text = "T = --:--:--"
+                self.viewer.text_overlay.position = 'top_right'
+                self.viewer.text_overlay.visible = True
         else:
             # Single timepoint
             if len(self.current_metadata['timepoint_offsets']) == 1:
@@ -636,10 +641,13 @@ class PhenixDataLoaderWidget(QWidget):
                 hours = int(seconds // 3600)
                 minutes = int((seconds % 3600) // 60)
                 secs = int(seconds % 60)
-                timestamp_str = f"{hours:02d}:{minutes:02d}:{secs:02d} (h:m:s)"
+                timestamp_str = f"Single timepoint\nT = {hours:02d}:{minutes:02d}:{secs:02d}"
                 self.viewer.text_overlay.text = timestamp_str
+                self.viewer.text_overlay.position = 'top_right'
+                self.viewer.text_overlay.visible = True
             else:
                 self.viewer.text_overlay.text = ""
+                self.viewer.text_overlay.visible = False
     
     def _save_data(self):
         """Save the currently loaded data to file."""
