@@ -48,6 +48,8 @@ def test_collapsible_section(qtbot):
     
     section = CollapsibleSection("Test Section")
     qtbot.addWidget(section)
+    section.show()  # Ensure widget and its children become visible
+    qtbot.waitExposed(section)  # Waits until widget is shown, if supported by your qtbot
     
     # Check initial state - should be expanded
     assert not section.is_collapsed
@@ -98,6 +100,11 @@ def test_multiple_collapsible_sections(qtbot):
     layout.addWidget(section1)
     layout.addWidget(section2)
     
+    section1.show()  # Ensure widget and its children become visible
+    qtbot.waitExposed(section1)  # Waits until widget is shown, if supported by your qtbot
+    section2.show()  # Ensure widget and its children become visible
+    qtbot.waitExposed(section2)  # Waits until widget is shown, if supported by your qtbot
+
     # Add content to both
     for section in [section1, section2]:
         content_layout = QVBoxLayout()
@@ -137,6 +144,9 @@ def test_collapsible_section_content_layout(qtbot):
     
     section = CollapsibleSection("Test Section")
     qtbot.addWidget(section)
+
+    section.show()  # Ensure widget and its children become visible
+    qtbot.waitExposed(section)  # Waits until widget is shown, if supported by your qtbot
     
     # Create a layout with multiple widgets
     content_layout = QVBoxLayout()
