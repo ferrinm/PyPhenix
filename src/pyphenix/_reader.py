@@ -249,6 +249,182 @@ def parse_ffc_string(ffc_str: str) -> dict:
     # Wrap in 'Background' key to match expected structure
     return {'Background': bg_result}
 
+class LazyImageArray:
+    """
+    Lazy-loading wrapper for TIFF images.
+    
+    This class provides an array-like interface that loads TIFF files
+    on-demand using PIL, enabling visualization of large datasets without
+    loading everything into RAM at once.
+    
+    Images are cached in memory as they're accessed to improve performance
+    for repeated access to the same data.
+    """
+    
+    def __init__(self, shape: Tuple[int, ...], dtype, image_paths: Dict, 
+                 images_path: Path, construct_path_func):
+        """
+        Initialize lazy-loading array wrapper.
+        
+        Parameters
+        ----------
+        shape : tuple
+            Overall array shape (T, C, Z, Y, X)
+        dtype : numpy dtype
+            Data type of images
+        image_paths : dict
+            Mapping from (t, c, z) indices to image path info
+        images_path : Path
+            Base path for images
+        construct_path_func : callable
+            Function to construct full image path from URL and well coordinates
+        """
+        self.shape = shape
+        self.dtype = dtype
+        self.ndim = len(shape)
+        self.image_paths = image_paths
+        self.images_path = images_path
+        self.construct_path_func = construct_path_func
+        
+        # Cache for loaded images (keeps recently accessed images in memory)
+        from collections import OrderedDict
+        self._image_cache = OrderedDict()
+        self._max_cache_size = 100  # Maximum number of images to cache
+        
+        # Track cache statistics
+        self._cache_hits = 0
+        self._cache_misses = 0
+    
+    def __getitem__(self, key):
+        """
+        Load data on-demand when indexed.
+        
+        Supports arbitrary numpy-style indexing including slicing.
+        Only loads the specific images needed for the requested slice.
+        """
+        from PIL import Image as PILImage
+        
+        # Normalize the key to always be a tuple
+        if not isinstance(key, tuple):
+            key = (key,)
+        
+        # Pad key with slice(None) if needed
+        key = key + (slice(None),) * (self.ndim - len(key))
+        
+        # Parse the indexing for T, C, Z dimensions
+        t_idx, c_idx, z_idx = key[:3]
+        spatial_idx = key[3:]
+        
+        # Convert single indices to ranges
+        def normalize_index(idx, max_size):
+            if isinstance(idx, int):
+                if idx < 0:
+                    idx = max_size + idx
+                return [idx]
+            elif isinstance(idx, slice):
+                start, stop, step = idx.indices(max_size)
+                return list(range(start, stop, step))
+            else:
+                return list(idx)
+        
+        t_range = normalize_index(t_idx, self.shape[0])
+        c_range = normalize_index(c_idx, self.shape[1])
+        z_range = normalize_index(z_idx, self.shape[2])
+        
+        # Determine spatial output shape by loading a sample image
+        sample_key = (0, 0, 0) + spatial_idx
+        if sample_key[:3] in self.image_paths:
+            sample_path = self.image_paths[sample_key[:3]]
+            full_path = self.construct_path_func(
+                sample_path['url'], 
+                sample_path['row'], 
+                sample_path['col']
+            )
+            if full_path.exists():
+                with PILImage.open(full_path) as pil_img:
+                    sample = np.array(pil_img, dtype=self.dtype)
+                    spatial_shape = sample[spatial_idx].shape
+            else:
+                # Estimate spatial shape
+                h, w = self.shape[3:5]
+                spatial_shape = np.zeros((h, w), dtype=self.dtype)[spatial_idx].shape
+        else:
+            h, w = self.shape[3:5]
+            spatial_shape = np.zeros((h, w), dtype=self.dtype)[spatial_idx].shape
+        
+        # Allocate output array
+        out_shape = (len(t_range), len(c_range), len(z_range)) + spatial_shape
+        result = np.zeros(out_shape, dtype=self.dtype)
+        
+        # Load each requested image
+        for t_out, t in enumerate(t_range):
+            for c_out, c in enumerate(c_range):
+                for z_out, z in enumerate(z_range):
+                    cache_key = (t, c, z)
+                    
+                    if cache_key in self.image_paths:
+                        path_info = self.image_paths[cache_key]
+                        full_path = self.construct_path_func(
+                            path_info['url'],
+                            path_info['row'],
+                            path_info['col']
+                        )
+                        
+                        if full_path.exists():
+                            # Check cache first
+                            if cache_key in self._image_cache:
+                                # Cache hit - move to end (most recently used)
+                                img = self._image_cache.pop(cache_key)
+                                self._image_cache[cache_key] = img
+                                self._cache_hits += 1
+                            else:
+                                # Cache miss - load from disk
+                                with PILImage.open(full_path) as pil_img:
+                                    img = np.array(pil_img, dtype=self.dtype)
+                                
+                                # Add to cache
+                                self._image_cache[cache_key] = img
+                                self._cache_misses += 1
+                                
+                                # Limit cache size (remove oldest - FIFO)
+                                if len(self._image_cache) > self._max_cache_size:
+                                    self._image_cache.popitem(last=False)
+                            
+                            # Apply spatial indexing
+                            result[t_out, c_out, z_out] = img[spatial_idx]
+        
+        return result
+    
+    def __array__(self):
+        """Convert to full numpy array (loads everything into memory)."""
+        return self[:]
+    
+    def __repr__(self):
+        cache_info = f"cached={len(self._image_cache)}/{self._max_cache_size}"
+        hit_rate = (self._cache_hits / (self._cache_hits + self._cache_misses) * 100 
+                   if (self._cache_hits + self._cache_misses) > 0 else 0)
+        return (f"LazyImageArray(shape={self.shape}, dtype={self.dtype}, "
+                f"{cache_info}, hit_rate={hit_rate:.1f}%)")
+    
+    def clear_cache(self):
+        """Clear the image cache to free memory."""
+        self._image_cache.clear()
+        print(f"Cache cleared. Stats: {self._cache_hits} hits, {self._cache_misses} misses")
+        self._cache_hits = 0
+        self._cache_misses = 0
+    
+    def get_cache_info(self):
+        """Get information about cache usage."""
+        hit_rate = (self._cache_hits / (self._cache_hits + self._cache_misses) * 100 
+                   if (self._cache_hits + self._cache_misses) > 0 else 0)
+        return {
+            'cached_images': len(self._image_cache),
+            'max_cache_size': self._max_cache_size,
+            'cache_hits': self._cache_hits,
+            'cache_misses': self._cache_misses,
+            'hit_rate_percent': hit_rate
+        }
+
 class OperaPhenixReader:
     """
     Reader for Opera Phenix exported experiment data.
@@ -900,6 +1076,66 @@ class OperaPhenixReader:
             print(f"Z-step: {self.metadata.z_step*1e6:.3f} µm")
 
         print("="*60 + "\n")
+
+    def _read_images_lazy(self, row: int, col: int, fields: List[int],
+                        timepoints: List[int], channels: List[int],
+                        z_slices: List[int]) -> LazyImageArray:
+        """
+        Create lazy-loading array wrapper for on-demand image loading.
+
+        Parameters
+        ----------
+        row : int
+            Well row number
+        col : int
+            Well column number
+        fields : List[int]
+            List of field IDs (only first field used)
+        timepoints : List[int]
+            List of timepoint IDs
+        channels : List[int]
+            List of channel IDs
+        z_slices : List[int]
+            List of z-slice IDs
+
+        Returns
+        -------
+        LazyImageArray
+            Lazy-loading array wrapper that loads images on-demand
+        """
+        # Determine output shape
+        n_time = len(timepoints)
+        n_channels = len(channels)
+        n_z = len(z_slices)
+        img_h, img_w = self.metadata.image_size
+
+        shape = (n_time, n_channels, n_z, img_h, img_w)
+
+        # Build mapping from (t, c, z) indices to image path info
+        field = fields[0]
+        image_paths = {}
+
+        for t_idx, timepoint in enumerate(timepoints):
+            for c_idx, channel in enumerate(channels):
+                for z_idx, z_slice in enumerate(z_slices):
+                    key_lookup = (row, col, field, z_slice, timepoint, channel)
+                    if key_lookup in self.image_index:
+                        image_paths[(t_idx, c_idx, z_idx)] = {
+                            'url': self.image_index[key_lookup]['url'],
+                            'row': row,
+                            'col': col
+                        }
+
+        # Create lazy-loading wrapper
+        wrapper = LazyImageArray(
+            shape=shape,
+            dtype=np.uint16,
+            image_paths=image_paths,
+            images_path=self.images_path,
+            construct_path_func=self._construct_image_path
+        )
+
+        return wrapper
     
     def read_data(self,
                 row: Optional[Union[int, str]] = None,
@@ -911,8 +1147,9 @@ class OperaPhenixReader:
                 z_slices: Optional[Union[int, List[int]]] = None,
                 metadata_only: bool = False,
                 apply_ffc: bool = True,
+                lazy_loading: bool = False,
                 output_file: Optional[str] = None,
-                output_format: Optional[str] = None) -> Tuple[np.ndarray, Dict]:
+                output_format: Optional[str] = None) -> Tuple[Union[np.ndarray, 'LazyImageArray'], Dict]:
         """
         Read image data from Opera Phenix experiment.
 
@@ -937,6 +1174,9 @@ class OperaPhenixReader:
             If True, only print metadata without loading image data
         apply_ffc : bool, default True
             Whether to apply flat field correction if available
+        lazy_loading : bool, default False
+            If True, return a lazy-loading array that loads images on-demand.
+            This is faster for initial load but incompatible with FFC and stitching.
         output_file : str, optional
             Path to save output file
         output_format : str, optional
@@ -944,8 +1184,9 @@ class OperaPhenixReader:
 
         Returns
         -------
-        data : np.ndarray or None
-            Image data array with dimensions (T, C, Z, Y, X), or None if metadata_only=True
+        data : np.ndarray or LazyImageArray or None
+            Image data array with dimensions (T, C, Z, Y, X), or None if metadata_only=True.
+            If lazy_loading=True, returns a LazyImageArray for on-demand loading.
         metadata : dict
             Dictionary containing metadata
         """
@@ -955,6 +1196,22 @@ class OperaPhenixReader:
         # Convert row to numeric if letter provided
         if row is not None and isinstance(row, str):
             row = self.letter_to_row(row)
+
+        # Validate lazy loading compatibility
+        if lazy_loading:
+            if apply_ffc and self.ffc_profiles:
+                warnings.warn(
+                    "Flat field correction is not compatible with lazy loading mode. "
+                    "FFC will be disabled.",
+                    UserWarning
+                )
+                apply_ffc = False
+
+            if stitch_fields:
+                raise ValueError(
+                    "Field stitching is not compatible with lazy loading mode. "
+                    "Please disable either stitching or lazy loading."
+                )
 
         if metadata_only:
             # Set defaults for metadata preparation
@@ -1060,14 +1317,18 @@ class OperaPhenixReader:
         
         # Read images
         if stitch_fields:
-            # Pass apply_ffc parameter to stitching function
             data = self._read_and_stitch(row, column, fields, timepoints, 
                                         channels, z_slices, apply_ffc=apply_ffc)
             ffc_applied_during_stitch = apply_ffc and self.ffc_profiles
         else:
-            data = self._read_images(row, column, fields, timepoints,
-                                channels, z_slices)
-            ffc_applied_during_stitch = False
+            if lazy_loading:
+                data = self._read_images_lazy(row, column, fields, timepoints,
+                                            channels, z_slices)
+                ffc_applied_during_stitch = False
+            else:
+                data = self._read_images(row, column, fields, timepoints,
+                                    channels, z_slices)
+                ffc_applied_during_stitch = False
 
         # Prepare metadata dictionary
         metadata_dict = self._prepare_metadata_dict(
@@ -1079,17 +1340,21 @@ class OperaPhenixReader:
         self._print_metadata(metadata_dict)
 
         if not metadata_only and data is not None:
-            # Apply flat field correction (only if not already applied during stitching)
-            if apply_ffc and self.ffc_profiles and not ffc_applied_during_stitch:
+            # Apply flat field correction (only if not already applied and not lazy loading)
+            if apply_ffc and self.ffc_profiles and not ffc_applied_during_stitch and not lazy_loading:
                 print("\nApplying flat field correction...")
                 data = self.apply_ffc(data, channels, apply=True)
             elif ffc_applied_during_stitch:
                 print("\nFlat field correction was applied during stitching.")
+            elif lazy_loading:
+                print("\nLazy loading mode - images will be loaded on-demand.")
             elif not self.ffc_profiles:
                 print("\nNo flat field correction profiles available.")
         
         # Save output if requested
         if output_file is not None and output_format is not None:
+            if lazy_loading:
+                print("Warning: Saving lazy-loaded data will load all images into memory.")
             self._save_output(data, metadata_dict, output_file, output_format)
         
         return data, metadata_dict
