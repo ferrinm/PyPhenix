@@ -249,6 +249,135 @@ def parse_ffc_string(ffc_str: str) -> dict:
     # Wrap in 'Background' key to match expected structure
     return {'Background': bg_result}
 
+class MemoryMappedImageArray:
+    """
+    Lazy-loading wrapper for memory-mapped TIFF images.
+    
+    This class provides an array-like interface that loads TIFF files
+    on-demand using tifffile.memmap, enabling visualization of large
+    datasets without loading everything into RAM.
+    """
+    
+    def __init__(self, shape: Tuple[int, ...], dtype, image_paths: Dict, 
+                 images_path: Path, construct_path_func):
+        """
+        Initialize memory-mapped array wrapper.
+        
+        Parameters
+        ----------
+        shape : tuple
+            Overall array shape (T, C, Z, Y, X)
+        dtype : numpy dtype
+            Data type of images
+        image_paths : dict
+            Mapping from (t, c, z) indices to image paths
+        images_path : Path
+            Base path for images
+        construct_path_func : callable
+            Function to construct full image path
+        """
+        self.shape = shape
+        self.dtype = dtype
+        self.ndim = len(shape)
+        self.image_paths = image_paths
+        self.images_path = images_path
+        self.construct_path_func = construct_path_func
+        
+        # Cache for opened memmap objects
+        self._memmap_cache = {}
+    
+    def __getitem__(self, key):
+        """
+        Load data on-demand when indexed.
+        
+        Supports arbitrary numpy-style indexing including slicing.
+        """
+        import tifffile
+        
+        # Normalize the key to always be a tuple
+        if not isinstance(key, tuple):
+            key = (key,)
+        
+        # Pad key with slice(None) if needed
+        key = key + (slice(None),) * (self.ndim - len(key))
+        
+        # Parse the indexing for T, C, Z dimensions
+        t_idx, c_idx, z_idx = key[:3]
+        spatial_idx = key[3:]
+        
+        # Convert single indices to ranges
+        def normalize_index(idx, max_size):
+            if isinstance(idx, int):
+                return [idx]
+            elif isinstance(idx, slice):
+                start, stop, step = idx.indices(max_size)
+                return list(range(start, stop, step))
+            else:
+                return list(idx)
+        
+        t_range = normalize_index(t_idx, self.shape[0])
+        c_range = normalize_index(c_idx, self.shape[1])
+        z_range = normalize_index(z_idx, self.shape[2])
+        
+        # Determine output shape
+        out_shape = (len(t_range), len(c_range), len(z_range),
+                    self.shape[3], self.shape[4])
+        
+        # Apply spatial indexing to last two dimensions
+        sample_key = (0, 0, 0) + spatial_idx
+        if sample_key[:3] in self.image_paths:
+            sample_path = self.image_paths[sample_key[:3]]
+            full_path = self.construct_path_func(sample_path['url'], 
+                                                 sample_path['row'], 
+                                                 sample_path['col'])
+            if full_path.exists():
+                with tifffile.TiffFile(full_path) as tif:
+                    sample = tif.asarray()
+                    spatial_shape = sample[spatial_idx].shape
+            else:
+                # Estimate spatial shape
+                h, w = self.shape[3:5]
+                spatial_shape = np.zeros((h, w))[spatial_idx].shape
+        else:
+            h, w = self.shape[3:5]
+            spatial_shape = np.zeros((h, w))[spatial_idx].shape
+        
+        out_shape = (len(t_range), len(c_range), len(z_range)) + spatial_shape
+        result = np.zeros(out_shape, dtype=self.dtype)
+        
+        # Load each requested image
+        for t_out, t in enumerate(t_range):
+            for c_out, c in enumerate(c_range):
+                for z_out, z in enumerate(z_range):
+                    cache_key = (t, c, z)
+                    
+                    if cache_key in self.image_paths:
+                        path_info = self.image_paths[cache_key]
+                        full_path = self.construct_path_func(
+                            path_info['url'],
+                            path_info['row'],
+                            path_info['col']
+                        )
+                        
+                        if full_path.exists():
+                            # Use memmap if not already cached
+                            if cache_key not in self._memmap_cache:
+                                self._memmap_cache[cache_key] = tifffile.memmap(
+                                    full_path, mode='r'
+                                )
+                            
+                            img = self._memmap_cache[cache_key]
+                            result[t_out, c_out, z_out] = img[spatial_idx]
+        
+        return result
+    
+    def __array__(self):
+        """Convert to full numpy array (loads everything into memory)."""
+        return self[:]
+    
+    def __repr__(self):
+        return f"MemoryMappedImageArray(shape={self.shape}, dtype={self.dtype})"
+
 class OperaPhenixReader:
     """
     Reader for Opera Phenix exported experiment data.
@@ -1403,6 +1532,68 @@ class OperaPhenixReader:
 
         return data
     
+    def _read_images_memmap(self, row: int, col: int, fields: List[int],
+                        timepoints: List[int], channels: List[int],
+                        z_slices: List[int]) -> MemoryMappedImageArray:
+        """
+        Create memory-mapped array wrapper for lazy loading.
+
+        Parameters
+        ----------
+        row : int
+            Well row number
+        col : int
+            Well column number
+        fields : List[int]
+            List of field IDs (only first field used)
+        timepoints : List[int]
+            List of timepoint IDs
+        channels : List[int]
+            List of channel IDs
+        z_slices : List[int]
+            List of z-slice IDs
+
+        Returns
+        -------
+        MemoryMappedImageArray
+            Lazy-loading array wrapper
+        """
+        import tifffile
+
+        # Determine output shape
+        n_time = len(timepoints)
+        n_channels = len(channels)
+        n_z = len(z_slices)
+        img_h, img_w = self.metadata.image_size
+
+        shape = (n_time, n_channels, n_z, img_h, img_w)
+
+        # Build mapping from (t, c, z) to image path info
+        field = fields[0]
+        image_paths = {}
+
+        for t_idx, timepoint in enumerate(timepoints):
+            for c_idx, channel in enumerate(channels):
+                for z_idx, z_slice in enumerate(z_slices):
+                    key_lookup = (row, col, field, z_slice, timepoint, channel)
+                    if key_lookup in self.image_index:
+                        image_paths[(t_idx, c_idx, z_idx)] = {
+                            'url': self.image_index[key_lookup]['url'],
+                            'row': row,
+                            'col': col
+                        }
+
+        # Create wrapper
+        wrapper = MemoryMappedImageArray(
+            shape=shape,
+            dtype=np.uint16,
+            image_paths=image_paths,
+            images_path=self.images_path,
+            construct_path_func=self._construct_image_path
+        )
+
+        return wrapper
+
     def _prepare_metadata_dict(self, row: int, col: int, fields: List[int],
                             timepoints: List[int], channels: List[int],
                             z_slices: List[int], stitched: bool,
@@ -1545,198 +1736,6 @@ class OperaPhenixReader:
             print("Saving as numpy instead.")
             self._save_output(data, metadata, str(output_path.with_suffix('.npy')), 'numpy')
 
-class MemoryMappedImageArray:
-    """
-    Lazy-loading wrapper for memory-mapped TIFF images.
-    
-    This class provides an array-like interface that loads TIFF files
-    on-demand using tifffile.memmap, enabling visualization of large
-    datasets without loading everything into RAM.
-    """
-    
-    def __init__(self, shape: Tuple[int, ...], dtype, image_paths: Dict, 
-                 images_path: Path, construct_path_func):
-        """
-        Initialize memory-mapped array wrapper.
-        
-        Parameters
-        ----------
-        shape : tuple
-            Overall array shape (T, C, Z, Y, X)
-        dtype : numpy dtype
-            Data type of images
-        image_paths : dict
-            Mapping from (t, c, z) indices to image paths
-        images_path : Path
-            Base path for images
-        construct_path_func : callable
-            Function to construct full image path
-        """
-        self.shape = shape
-        self.dtype = dtype
-        self.ndim = len(shape)
-        self.image_paths = image_paths
-        self.images_path = images_path
-        self.construct_path_func = construct_path_func
-        
-        # Cache for opened memmap objects
-        self._memmap_cache = {}
-    
-    def __getitem__(self, key):
-        """
-        Load data on-demand when indexed.
-        
-        Supports arbitrary numpy-style indexing including slicing.
-        """
-        import tifffile
-        
-        # Normalize the key to always be a tuple
-        if not isinstance(key, tuple):
-            key = (key,)
-        
-        # Pad key with slice(None) if needed
-        key = key + (slice(None),) * (self.ndim - len(key))
-        
-        # Parse the indexing for T, C, Z dimensions
-        t_idx, c_idx, z_idx = key[:3]
-        spatial_idx = key[3:]
-        
-        # Convert single indices to ranges
-        def normalize_index(idx, max_size):
-            if isinstance(idx, int):
-                return [idx]
-            elif isinstance(idx, slice):
-                start, stop, step = idx.indices(max_size)
-                return list(range(start, stop, step))
-            else:
-                return list(idx)
-        
-        t_range = normalize_index(t_idx, self.shape[0])
-        c_range = normalize_index(c_idx, self.shape[1])
-        z_range = normalize_index(z_idx, self.shape[2])
-        
-        # Determine output shape
-        out_shape = (len(t_range), len(c_range), len(z_range),
-                    self.shape[3], self.shape[4])
-        
-        # Apply spatial indexing to last two dimensions
-        # This is simplified - you may need more sophisticated handling
-        sample_key = (0, 0, 0) + spatial_idx
-        if sample_key[:3] in self.image_paths:
-            sample_path = self.image_paths[sample_key[:3]]
-            full_path = self.construct_path_func(sample_path['url'], 
-                                                 sample_path['row'], 
-                                                 sample_path['col'])
-            if full_path.exists():
-                with tifffile.TiffFile(full_path) as tif:
-                    sample = tif.asarray()
-                    spatial_shape = sample[spatial_idx].shape
-            else:
-                # Estimate spatial shape
-                h, w = self.shape[3:5]
-                spatial_shape = np.zeros((h, w))[spatial_idx].shape
-        else:
-            h, w = self.shape[3:5]
-            spatial_shape = np.zeros((h, w))[spatial_idx].shape
-        
-        out_shape = (len(t_range), len(c_range), len(z_range)) + spatial_shape
-        result = np.zeros(out_shape, dtype=self.dtype)
-        
-        # Load each requested image
-        for t_out, t in enumerate(t_range):
-            for c_out, c in enumerate(c_range):
-                for z_out, z in enumerate(z_range):
-                    cache_key = (t, c, z)
-                    
-                    if cache_key in self.image_paths:
-                        path_info = self.image_paths[cache_key]
-                        full_path = self.construct_path_func(
-                            path_info['url'],
-                            path_info['row'],
-                            path_info['col']
-                        )
-                        
-                        if full_path.exists():
-                            # Use memmap if not already cached
-                            if cache_key not in self._memmap_cache:
-                                self._memmap_cache[cache_key] = tifffile.memmap(
-                                    full_path, mode='r'
-                                )
-                            
-                            img = self._memmap_cache[cache_key]
-                            result[t_out, c_out, z_out] = img[spatial_idx]
-        
-        return result
-    
-    def __array__(self):
-        """Convert to full numpy array (loads everything into memory)."""
-        return self[:]
-    
-    def __repr__(self):
-        return f"MemoryMappedImageArray(shape={self.shape}, dtype={self.dtype})"
-
-
-def _read_images_memmap(self, row: int, col: int, fields: List[int],
-                       timepoints: List[int], channels: List[int],
-                       z_slices: List[int]) -> MemoryMappedImageArray:
-    """
-    Create memory-mapped array wrapper for lazy loading.
-    
-    Parameters
-    ----------
-    row : int
-        Well row number
-    col : int
-        Well column number
-    fields : List[int]
-        List of field IDs (only first field used)
-    timepoints : List[int]
-        List of timepoint IDs
-    channels : List[int]
-        List of channel IDs
-    z_slices : List[int]
-        List of z-slice IDs
-    
-    Returns
-    -------
-    MemoryMappedImageArray
-        Lazy-loading array wrapper
-    """
-    import tifffile
-    
-    # Determine output shape
-    n_time = len(timepoints)
-    n_channels = len(channels)
-    n_z = len(z_slices)
-    img_h, img_w = self.metadata.image_size
-    
-    shape = (n_time, n_channels, n_z, img_h, img_w)
-    
-    # Build mapping from (t, c, z) to image path info
-    field = fields[0]
-    image_paths = {}
-    
-    for t_idx, timepoint in enumerate(timepoints):
-        for c_idx, channel in enumerate(channels):
-            for z_idx, z_slice in enumerate(z_slices):
-                key_lookup = (row, col, field, z_slice, timepoint, channel)
-                if key_lookup in self.image_index:
-                    image_paths[(t_idx, c_idx, z_idx)] = {
-                        'url': self.image_index[key_lookup]['url'],
-                        'row': row,
-                        'col': col
-                    }
-    
-    # Create wrapper
-    wrapper = MemoryMappedImageArray(
-        shape=shape,
-        dtype=np.uint16,
-        image_paths=image_paths,
-        images_path=self.images_path,
-        construct_path_func=self._construct_image_path
-    )
-    
-    return wrapper
 
 def napari_get_reader(path):
     """
