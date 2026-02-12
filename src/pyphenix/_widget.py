@@ -276,14 +276,28 @@ class PhenixDataLoaderWidget(QWidget):
         # Display options group
         display_group = CollapsibleSection("Display Options")
         display_layout = QVBoxLayout()
-        
+
         self.ffc_checkbox = QCheckBox("Apply flat field correction")
         self.ffc_checkbox.setChecked(True)  # Default to True
         self.ffc_checkbox.setToolTip(
             "Apply flat field correction to remove vignetting and illumination non-uniformity.\n"
-            "Requires FFC profiles in the experiment directory."
+            "Requires FFC profiles in the experiment directory.\n"
+            "Not compatible with lazy loading mode."
         )
         display_layout.addWidget(self.ffc_checkbox)
+
+        # Lazy loading checkbox
+        self.lazy_loading_checkbox = QCheckBox("Use lazy loading (load images on-demand)")
+        self.lazy_loading_checkbox.setChecked(False)
+        self.lazy_loading_checkbox.setToolTip(
+            "Load images on-demand instead of loading all into memory at once.\n"
+            "Faster initial loading for large datasets, but not compatible with:\n"
+            "  • Flat field correction\n"
+            "  • Field stitching\n\n"
+            "Images are cached in memory as accessed for faster repeat viewing."
+        )
+        self.lazy_loading_checkbox.stateChanged.connect(self._on_lazy_loading_changed)
+        display_layout.addWidget(self.lazy_loading_checkbox)
 
         self.timestamp_checkbox = QCheckBox("Show timepoint timestamp")
         self.timestamp_checkbox.setChecked(False)
@@ -394,6 +408,31 @@ class PhenixDataLoaderWidget(QWidget):
         if file_path:
             self.save_path_input.setText(file_path)
     
+    def _on_lazy_loading_changed(self, state):
+        """Handle lazy loading checkbox change."""
+        if state == Qt.Checked:
+            # Disable incompatible options
+            if self.stitch_checkbox.isChecked():
+                self.stitch_checkbox.setChecked(False)
+                notifications.show_warning(
+                    "Field stitching disabled - not compatible with lazy loading mode"
+                )
+
+            if self.ffc_checkbox.isChecked():
+                self.ffc_checkbox.setChecked(False)
+                notifications.show_warning(
+                    "Flat field correction disabled - not compatible with lazy loading mode"
+                )
+
+            # Disable these options while lazy loading is active
+            self.stitch_checkbox.setEnabled(False)
+            self.ffc_checkbox.setEnabled(False)
+        else:
+            # Re-enable options
+            self.stitch_checkbox.setEnabled(True)
+            if self.reader and self.reader.ffc_profiles:
+                self.ffc_checkbox.setEnabled(True)
+
     def _load_experiment(self):
         """Load the selected experiment."""
         exp_path = self.path_input.text()
@@ -700,14 +739,10 @@ class PhenixDataLoaderWidget(QWidget):
             notifications.show_warning("Please load an experiment first")
             return
 
-        # Get selections
+        # Get selections (existing code for well, field, etc.)
         well_str = self.well_combo.currentText()
-
-        # Parse well string in letter notation (e.g., "A03" or "B12")
         row_letter = well_str[0]
         col = int(well_str[1:])
-
-        # Convert row letter to numeric for internal use
         row = self.reader.letter_to_row(row_letter)
 
         stitch = self.stitch_checkbox.isChecked()
@@ -736,15 +771,17 @@ class PhenixDataLoaderWidget(QWidget):
             return
         z_slices = [self.metadata.planes[i] for i in z_indices]
 
-        # Get FFC checkbox state
+        # Get FFC and lazy loading checkbox states
         apply_ffc = self.ffc_checkbox.isChecked()
+        lazy_loading = self.lazy_loading_checkbox.isChecked()
 
-        # Show loading message (use letter notation in message)
+        # Show loading message
         ffc_msg = " (with FFC)" if apply_ffc else " (without FFC)"
-        notifications.show_info(f"Loading data for well {well_str}{ffc_msg}...")
+        lazy_msg = " [lazy loading]" if lazy_loading else ""
+        notifications.show_info(f"Loading data for well {well_str}{ffc_msg}{lazy_msg}...")
 
         try:
-            # Load data (without saving)
+            # Load data
             data, metadata = self.reader.read_data(
                 row=row,
                 column=col,
@@ -753,14 +790,22 @@ class PhenixDataLoaderWidget(QWidget):
                 timepoints=timepoints,
                 channels=channels,
                 z_slices=z_slices,
-                apply_ffc=apply_ffc  # Add this parameter
+                apply_ffc=apply_ffc,
+                lazy_loading=lazy_loading  # Use lazy_loading parameter
             )
 
             # Store data and metadata for saving later
             self.current_data = data
             self.current_metadata = metadata
 
-            # Enable save button now that data is loaded
+            # Update save button tooltip
+            if lazy_loading:
+                self.save_btn.setToolTip(
+                    "Note: Saving will load all images into memory"
+                )
+            else:
+                self.save_btn.setToolTip("")
+
             self.save_btn.setEnabled(True)
 
             # Clear existing layers and remove overlay
@@ -773,6 +818,15 @@ class PhenixDataLoaderWidget(QWidget):
             # Re-enable timestamp if checkbox is checked
             if self.timestamp_checkbox.isChecked():
                 self._add_timestamp_overlay()
+
+            # Show cache info if lazy loading
+            if lazy_loading:
+                from ._reader import LazyImageArray
+                if isinstance(data, LazyImageArray):
+                    notifications.show_info(
+                        f"Lazy loading enabled. Images will load as you navigate. "
+                        f"Cache size: {data._max_cache_size} images"
+                    )
 
             notifications.show_info("Data loaded successfully!")
 
