@@ -276,14 +276,27 @@ class PhenixDataLoaderWidget(QWidget):
         # Display options group
         display_group = CollapsibleSection("Display Options")
         display_layout = QVBoxLayout()
-        
+
         self.ffc_checkbox = QCheckBox("Apply flat field correction")
         self.ffc_checkbox.setChecked(True)  # Default to True
         self.ffc_checkbox.setToolTip(
             "Apply flat field correction to remove vignetting and illumination non-uniformity.\n"
-            "Requires FFC profiles in the experiment directory."
+            "Requires FFC profiles in the experiment directory.\n"
+            "Not compatible with memory-mapped mode."
         )
         display_layout.addWidget(self.ffc_checkbox)
+
+        # NEW: Memory-mapped reading checkbox
+        self.memmap_checkbox = QCheckBox("Use memory-mapped reading (lazy loading)")
+        self.memmap_checkbox.setChecked(False)
+        self.memmap_checkbox.setToolTip(
+            "Load images on-demand instead of loading all into memory.\n"
+            "Faster initial loading for large datasets, but not compatible with:\n"
+            "  • Flat field correction\n"
+            "  • Field stitching"
+        )
+        self.memmap_checkbox.stateChanged.connect(self._on_memmap_changed)
+        display_layout.addWidget(self.memmap_checkbox)
 
         self.timestamp_checkbox = QCheckBox("Show timepoint timestamp")
         self.timestamp_checkbox.setChecked(False)
@@ -371,6 +384,31 @@ class PhenixDataLoaderWidget(QWidget):
         
         # Disable controls until experiment is loaded
         self._set_controls_enabled(False)
+
+    def _on_memmap_changed(self, state):
+        """Handle memory-mapped mode checkbox change."""
+        if state == Qt.Checked:
+            # Disable incompatible options
+            if self.stitch_checkbox.isChecked():
+                self.stitch_checkbox.setChecked(False)
+                notifications.show_warning(
+                    "Field stitching disabled - not compatible with memory-mapped mode"
+                )
+
+            if self.ffc_checkbox.isChecked():
+                self.ffc_checkbox.setChecked(False)
+                notifications.show_warning(
+                    "Flat field correction disabled - not compatible with memory-mapped mode"
+                )
+
+            # Disable these options while memmap is active
+            self.stitch_checkbox.setEnabled(False)
+            self.ffc_checkbox.setEnabled(False)
+        else:
+            # Re-enable options
+            self.stitch_checkbox.setEnabled(True)
+            if self.reader and self.reader.ffc_profiles:
+                self.ffc_checkbox.setEnabled(True)
     
     def _browse_experiment(self):
         """Open directory dialog for experiment selection."""
@@ -736,15 +774,17 @@ class PhenixDataLoaderWidget(QWidget):
             return
         z_slices = [self.metadata.planes[i] for i in z_indices]
 
-        # Get FFC checkbox state
+        # Get FFC and memmap checkbox states
         apply_ffc = self.ffc_checkbox.isChecked()
+        use_memmap = self.memmap_checkbox.isChecked()
 
-        # Show loading message (use letter notation in message)
+        # Show loading message
         ffc_msg = " (with FFC)" if apply_ffc else " (without FFC)"
-        notifications.show_info(f"Loading data for well {well_str}{ffc_msg}...")
+        memmap_msg = " [memmap]" if use_memmap else ""
+        notifications.show_info(f"Loading data for well {well_str}{ffc_msg}{memmap_msg}...")
 
         try:
-            # Load data (without saving)
+            # Load data
             data, metadata = self.reader.read_data(
                 row=row,
                 column=col,
@@ -753,14 +793,22 @@ class PhenixDataLoaderWidget(QWidget):
                 timepoints=timepoints,
                 channels=channels,
                 z_slices=z_slices,
-                apply_ffc=apply_ffc  # Add this parameter
+                apply_ffc=apply_ffc,
+                use_memmap=use_memmap  # NEW PARAMETER
             )
 
             # Store data and metadata for saving later
             self.current_data = data
             self.current_metadata = metadata
 
-            # Enable save button now that data is loaded
+            # Note: Saving memmap data will load it all into memory
+            if use_memmap:
+                self.save_btn.setToolTip(
+                    "Note: Saving will load all data into memory"
+                )
+            else:
+                self.save_btn.setToolTip("")
+
             self.save_btn.setEnabled(True)
 
             # Clear existing layers and remove overlay
