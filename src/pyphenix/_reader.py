@@ -668,6 +668,37 @@ class OperaPhenixReader:
         """
         return ord(letter.upper()) - ord('A') + 1
 
+    @staticmethod
+    def get_available_wells(self) -> List[tuple]:
+        """
+        Return list of (row, col) tuples that actually have data in the image index.
+
+        Returns
+        -------
+        list of tuple
+            Sorted list of (row, col) integer pairs present in the image index.
+        """
+        return sorted(self.well_field_map.keys())
+
+    @staticmethod
+    def well_has_data(self, row: int, col: int) -> bool:
+        """
+        Check whether a given well has any images in the index.
+
+        Parameters
+        ----------
+        row : int
+            Well row number (1-based)
+        col : int
+            Well column number (1-based)
+
+        Returns
+        -------
+        bool
+            True if at least one image exists for this well.
+        """
+        return (row, col) in self.well_field_map and len(self.well_field_map[(row, col)]) > 0
+
     def _detect_structure(self):
         """
         Detect whether this is export or archive format and set paths accordingly.
@@ -1299,6 +1330,17 @@ class OperaPhenixReader:
             row = min([int(w[:2]) for w in self.metadata.wells])
         if column is None:
             column = min([int(w[2:]) for w in self.metadata.wells])
+
+        if not self.well_has_data(row, column):
+            available = self.get_available_wells()
+            available_str = [
+                f"{self.row_to_letter(r)}{c:02d}" for r, c in available
+            ]
+            raise ValueError(
+                f"Well {self.row_to_letter(row)}{column:02d} "
+                f"(r{row:02d}c{column:02d}) has no data in the image index.\n"
+                f"Available wells: {', '.join(available_str)}"
+            )
         
         # Get available fields for this well
         available_fields = self.well_field_map.get((row, column), self.metadata.fields)
@@ -1424,9 +1466,9 @@ class OperaPhenixReader:
             print("\n" + "!"*60)
             print(f"WARNING: {len(missing_images)} missing images")
             print("!"*60)
-            for miss in missing_images[:10]:  # Show first 10
-                row, col, field, plane, timepoint, channel = miss['key']
-                print(f"  Missing: r{row:02d}c{col:02d}f{field:02d}p{plane:02d}t{timepoint}ch{channel}")
+            for miss in missing_images[:10]:
+                m_row, m_col, m_field, m_plane, m_timepoint, m_channel = miss['key']
+                print(f"  Missing: r{m_row:02d}c{m_col:02d}f{m_field:02d}p{m_plane:02d}t{m_timepoint}ch{m_channel}")
                 print(f"    Reason: {miss['reason']}")
             if len(missing_images) > 10:
                 print(f"  ... and {len(missing_images) - 10} more")
@@ -1646,9 +1688,9 @@ class OperaPhenixReader:
             print("\n" + "!"*60)
             print(f"WARNING: {len(missing_images)} missing images")
             print("!"*60)
-            for miss in missing_images[:10]:  # Show first 10
-                row, col, field, plane, timepoint, channel = miss['key']
-                print(f"  Missing: r{row:02d}c{col:02d}f{field:02d}p{plane:02d}t{timepoint}ch{channel}")
+            for miss in missing_images[:10]:
+                m_row, m_col, m_field, m_plane, m_timepoint, m_channel = miss['key']
+                print(f"  Missing: r{m_row:02d}c{m_col:02d}f{m_field:02d}p{m_plane:02d}t{m_timepoint}ch{m_channel}")
                 print(f"    Reason: {miss['reason']}")
             if len(missing_images) > 10:
                 print(f"  ... and {len(missing_images) - 10} more")
