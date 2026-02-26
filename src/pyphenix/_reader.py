@@ -668,7 +668,6 @@ class OperaPhenixReader:
         """
         return ord(letter.upper()) - ord('A') + 1
 
-    @staticmethod
     def get_available_wells(self) -> List[tuple]:
         """
         Return list of (row, col) tuples that actually have data in the image index.
@@ -680,7 +679,6 @@ class OperaPhenixReader:
         """
         return sorted(self.well_field_map.keys())
 
-    @staticmethod
     def well_has_data(self, row: int, col: int) -> bool:
         """
         Check whether a given well has any images in the index.
