@@ -1319,7 +1319,7 @@ class OperaPhenixReader:
             if verbose:
                 self._print_metadata(metadata_dict)
 
-            print("\n*** METADATA ONLY - No image data loaded ***\n")
+            print("\n### METADATA ONLY - No image data loaded ###\n")
 
             return None, metadata_dict
         
@@ -1804,7 +1804,7 @@ class OperaPhenixReader:
             print(f"  z step: {metadata['z_step']*1e6:.3f} µm")
 
         if metadata['stitched']:
-            print(f"\n*** fields have been stitched ***")
+            print(f"\n### fields have been stitched ###")
 
         print("="*60 + "\n")
     
