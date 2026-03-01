@@ -433,7 +433,7 @@ class OperaPhenixReader:
     returning numpy arrays and metadata dictionaries.
     """
     
-    def __init__(self, experiment_path: str):
+    def __init__(self, experiment_path: str, verbose: bool = True):
         """
         Initialize reader with path to experiment directory.
 
@@ -447,6 +447,7 @@ class OperaPhenixReader:
             Path to the exported experiment directory
         """
         self.experiment_path = Path(experiment_path)
+        self.verbose = verbose  # store for use in other methods
 
         # Detect and set paths based on structure
         self._detect_structure()
@@ -466,7 +467,7 @@ class OperaPhenixReader:
         self.well_field_map = self._build_well_field_map()
          
         # Load flat field correction profiles
-        self.ffc_profiles = self._load_ffc_profiles()
+        self.ffc_profiles = self._load_ffc_profiles(verbose=self.verbose)
     
     def _detect_ffc_path(self) -> Optional[Path]:
         """
@@ -506,7 +507,7 @@ class OperaPhenixReader:
 
         return None
     
-    def _load_ffc_profiles(self) -> Dict[int, FFCProfile]:
+    def _load_ffc_profiles(self, verbose: bool = True) -> Dict[int, FFCProfile]:
         """
         Load flat field correction profiles from XML.
 
@@ -517,20 +518,20 @@ class OperaPhenixReader:
         """
         ffc_path = self._detect_ffc_path()
         if ffc_path is None:
-            print("No flat field correction profiles found.")
+            if verbose:
+                print("No flat field correction profiles found.")
             return {}
 
-        print(f"Loading FFC profiles from: {ffc_path.name}")
+        if verbose:
+            print(f"Loading FFC profiles from: {ffc_path.name}")
 
         try:
             with open(ffc_path, 'r', encoding='utf-8') as f:
                 xml_content = f.read()
 
-            # Parse XML
             tree = ET.parse(ffc_path)
             root = tree.getroot()
 
-            # Parse namespace
             ns_match = re.match(r'\{(.+)\}', root.tag)
             if ns_match:
                 ns = {'ns': ns_match.group(1)}
@@ -539,57 +540,59 @@ class OperaPhenixReader:
 
             profiles = {}
 
-            # Find all Map/Entry elements
             if ns:
                 entries = root.findall('.//ns:Map/ns:Entry', ns)
             else:
                 entries = root.findall('.//Map/Entry')
 
-            print(f"  Found {len(entries)} entries in XML")
+            if verbose:
+                print(f"  Found {len(entries)} entries in XML")
 
             for entry in entries:
                 channel_id = int(entry.get('ChannelID'))
-                print(f"\n  Processing Channel {channel_id}:")
+                if verbose:
+                    print(f"\n  Processing Channel {channel_id}:")
 
-                # Get FlatfieldProfile element
                 if ns:
                     ffc_elem = entry.find('ns:FlatfieldProfile', ns)
                 else:
                     ffc_elem = entry.find('FlatfieldProfile')
 
                 if ffc_elem is not None and ffc_elem.text:
-                    # Parse the custom format string
                     ffc_data = parse_ffc_string(ffc_elem.text)
 
-                    # Extract Background section
                     if 'Background' in ffc_data:
                         bg_data = ffc_data['Background']
                         profiles[channel_id] = FFCProfile(channel_id, bg_data)
-                        print(f"    Created FFCProfile")
+                        if verbose:
+                            print(f"    Created FFCProfile")
                     else:
-                        print(f"    WARNING: No Background section found in parsed data")
+                        if verbose:
+                            print(f"    WARNING: No Background section found in parsed data")
                 else:
-                    print(f"    WARNING: No FlatfieldProfile element or text found")
+                    if verbose:
+                        print(f"    WARNING: No FlatfieldProfile element or text found")
 
-            # Print summary
-            print(f"\n  Successfully loaded FFC profiles for {len(profiles)} channels:")
-            for ch_id, profile in profiles.items():
-                if profile.has_correction():
-                    print(f"    Channel {ch_id}: {profile.character} "
-                        f"(quality={profile.quality:.2f}, mean={profile.mean:.1f})")
-                else:
-                    print(f"    Channel {ch_id}: No correction (Identity)")
+            if verbose:
+                print(f"\n  Successfully loaded FFC profiles for {len(profiles)} channels:")
+                for ch_id, profile in profiles.items():
+                    if profile.has_correction():
+                        print(f"    Channel {ch_id}: {profile.character} "
+                            f"(quality={profile.quality:.2f}, mean={profile.mean:.1f})")
+                    else:
+                        print(f"    Channel {ch_id}: No correction (Identity)")
 
             return profiles
 
         except Exception as e:
-            print(f"Warning: Could not load FFC profiles: {e}")
-            import traceback
-            traceback.print_exc()
+            if verbose:
+                print(f"Warning: Could not load FFC profiles: {e}")
+                import traceback
+                traceback.print_exc()
             return {}
     
-    def apply_ffc(self, data: np.ndarray, channel_ids: List[int], 
-                apply: bool = True) -> np.ndarray:
+    def apply_ffc(self, data: np.ndarray, channel_ids: List[int],
+                apply: bool = True, verbose: bool = True) -> np.ndarray:
         """
         Apply flat field correction to image data.
 
@@ -626,7 +629,8 @@ class OperaPhenixReader:
                     # This reduces bright center and brightens dark edges
                     corrected[:, c_idx, :, :, :] /= illumination[np.newaxis, np.newaxis, :, :]
 
-                    print(f"  Applied FFC to channel {ch_id} (divided by illumination profile)")
+                    if verbose:
+                        print(f"  Applied FFC to channel {ch_id} (divided by illumination profile)")
 
         return corrected
 
@@ -663,6 +667,35 @@ class OperaPhenixReader:
             1-based row number (1, 2, 3, ...)
         """
         return ord(letter.upper()) - ord('A') + 1
+
+    def get_available_wells(self) -> List[tuple]:
+        """
+        Return list of (row, col) tuples that actually have data in the image index.
+
+        Returns
+        -------
+        list of tuple
+            Sorted list of (row, col) integer pairs present in the image index.
+        """
+        return sorted(self.well_field_map.keys())
+
+    def well_has_data(self, row: int, col: int) -> bool:
+        """
+        Check whether a given well has any images in the index.
+
+        Parameters
+        ----------
+        row : int
+            Well row number (1-based)
+        col : int
+            Well column number (1-based)
+
+        Returns
+        -------
+        bool
+            True if at least one image exists for this well.
+        """
+        return (row, col) in self.well_field_map and len(self.well_field_map[(row, col)]) > 0
 
     def _detect_structure(self):
         """
@@ -1148,6 +1181,7 @@ class OperaPhenixReader:
                 metadata_only: bool = False,
                 apply_ffc: bool = True,
                 lazy_loading: bool = False,
+                verbose: bool = True,
                 output_file: Optional[str] = None,
                 output_format: Optional[str] = None) -> Tuple[Union[np.ndarray, 'LazyImageArray'], Dict]:
         """
@@ -1177,6 +1211,8 @@ class OperaPhenixReader:
         lazy_loading : bool, default False
             If True, return a lazy-loading array that loads images on-demand.
             This is faster for initial load but incompatible with FFC and stitching.
+        verbose : bool, default True
+            Whether to print detailed information during loading
         output_file : str, optional
             Path to save output file
         output_format : str, optional
@@ -1191,7 +1227,8 @@ class OperaPhenixReader:
             Dictionary containing metadata
         """
         # Print dataset overview first
-        self._print_dataset_overview()
+        if verbose:
+            self._print_dataset_overview()
 
         # Convert row to numeric if letter provided
         if row is not None and isinstance(row, str):
@@ -1278,9 +1315,11 @@ class OperaPhenixReader:
                 row, column, fields, timepoints, channels, z_slices, 
                 stitch_fields, shape
             )
-            self._print_metadata(metadata_dict)
 
-            print("\n*** METADATA ONLY - No image data loaded ***\n")
+            if verbose:
+                self._print_metadata(metadata_dict)
+
+            print("\n### METADATA ONLY - No image data loaded ###\n")
 
             return None, metadata_dict
         
@@ -1289,6 +1328,17 @@ class OperaPhenixReader:
             row = min([int(w[:2]) for w in self.metadata.wells])
         if column is None:
             column = min([int(w[2:]) for w in self.metadata.wells])
+
+        if not self.well_has_data(row, column):
+            available = self.get_available_wells()
+            available_str = [
+                f"{self.row_to_letter(r)}{c:02d}" for r, c in available
+            ]
+            raise ValueError(
+                f"Well {self.row_to_letter(row)}{column:02d} "
+                f"(r{row:02d}c{column:02d}) has no data in the image index.\n"
+                f"Available wells: {', '.join(available_str)}"
+            )
         
         # Get available fields for this well
         available_fields = self.well_field_map.get((row, column), self.metadata.fields)
@@ -1337,19 +1387,24 @@ class OperaPhenixReader:
         )
 
         # Print metadata
-        self._print_metadata(metadata_dict)
+        if verbose:
+            self._print_metadata(metadata_dict)
 
         if not metadata_only and data is not None:
             # Apply flat field correction (only if not already applied and not lazy loading)
             if apply_ffc and self.ffc_profiles and not ffc_applied_during_stitch and not lazy_loading:
-                print("\nApplying flat field correction...")
-                data = self.apply_ffc(data, channels, apply=True)
+                if verbose:
+                    print("\nApplying flat field correction...")
+                data = self.apply_ffc(data, channels, apply=True, verbose=verbose)
             elif ffc_applied_during_stitch:
-                print("\nFlat field correction was applied during stitching.")
+                if verbose:
+                    print("\nFlat field correction was applied during stitching.")
             elif lazy_loading:
-                print("\nLazy loading mode - images will be loaded on-demand.")
+                if verbose:
+                    print("\nLazy loading mode - images will be loaded on-demand.")
             elif not self.ffc_profiles:
-                print("\nNo flat field correction profiles available.")
+                if verbose:
+                    print("\nNo flat field correction profiles available.")
         
         # Save output if requested
         if output_file is not None and output_format is not None:
@@ -1409,9 +1464,9 @@ class OperaPhenixReader:
             print("\n" + "!"*60)
             print(f"WARNING: {len(missing_images)} missing images")
             print("!"*60)
-            for miss in missing_images[:10]:  # Show first 10
-                row, col, field, plane, timepoint, channel = miss['key']
-                print(f"  Missing: r{row:02d}c{col:02d}f{field:02d}p{plane:02d}t{timepoint}ch{channel}")
+            for miss in missing_images[:10]:
+                m_row, m_col, m_field, m_plane, m_timepoint, m_channel = miss['key']
+                print(f"  Missing: r{m_row:02d}c{m_col:02d}f{m_field:02d}p{m_plane:02d}t{m_timepoint}ch{m_channel}")
                 print(f"    Reason: {miss['reason']}")
             if len(missing_images) > 10:
                 print(f"  ... and {len(missing_images) - 10} more")
@@ -1631,9 +1686,9 @@ class OperaPhenixReader:
             print("\n" + "!"*60)
             print(f"WARNING: {len(missing_images)} missing images")
             print("!"*60)
-            for miss in missing_images[:10]:  # Show first 10
-                row, col, field, plane, timepoint, channel = miss['key']
-                print(f"  Missing: r{row:02d}c{col:02d}f{field:02d}p{plane:02d}t{timepoint}ch{channel}")
+            for miss in missing_images[:10]:
+                m_row, m_col, m_field, m_plane, m_timepoint, m_channel = miss['key']
+                print(f"  Missing: r{m_row:02d}c{m_col:02d}f{m_field:02d}p{m_plane:02d}t{m_timepoint}ch{m_channel}")
                 print(f"    Reason: {miss['reason']}")
             if len(missing_images) > 10:
                 print(f"  ... and {len(missing_images) - 10} more")
@@ -1749,7 +1804,7 @@ class OperaPhenixReader:
             print(f"  z step: {metadata['z_step']*1e6:.3f} µm")
 
         if metadata['stitched']:
-            print(f"\n*** fields have been stitched ***")
+            print(f"\n### fields have been stitched ###")
 
         print("="*60 + "\n")
     
