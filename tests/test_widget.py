@@ -304,7 +304,7 @@ def test_add_layers_creates_image_layers(widget_with_viewer):
         'fields': [1]
     }
     
-    widget._add_layers_to_viewer(data, metadata)
+    widget._add_layers_to_viewer(viewer, data, metadata)
     
     # Check that layers were added
     assert len(viewer.layers) == 2
