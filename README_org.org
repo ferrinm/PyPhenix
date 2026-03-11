@@ -1,0 +1,87 @@
+* pyphenix
+:PROPERTIES:
+:CUSTOM_ID: pyphenix
+:END:
+[[https://github.com/ferrinm/pyphenix/raw/main/LICENSE][[[https://img.shields.io/pypi/l/pyphenix.svg?color=green]]]]
+[[https://pypi.org/project/pyphenix][[[https://img.shields.io/pypi/v/pyphenix.svg?color=green]]]]
+[[https://python.org][[[https://img.shields.io/pypi/pyversions/pyphenix.svg?color=green]]]]
+[[https://github.com/ferrinm/pyphenix/actions][[[https://github.com/ferrinm/pyphenix/workflows/tests/badge.svg]]]]
+[[https://codecov.io/gh/ferrinm/pyphenix][[[https://codecov.io/gh/ferrinm/pyphenix/branch/main/graph/badge.svg]]]]
+[[https://napari-hub.org/plugins/pyphenix][[[https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/pyphenix]]]]
+[[https://napari.org/stable/plugins/index.html][[[https://img.shields.io/badge/plugin-npe2-blue?link=https://napari.org/stable/plugins/index.html]]]]
+[[https://github.com/copier-org/copier][[[https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-purple.json]]]]
+
+A data loader and widget to visualize high-dimensional data collected on
+the Opera Phenix
+
+--------------
+
+This [[https://github.com/napari/napari][napari]] plugin was generated
+with [[https://copier.readthedocs.io/en/stable/][copier]] using the
+[napari-plugin-template] (None).
+
+#+begin_html
+  <!--
+  Don't miss the full getting started guide to set up your new package:
+  https://github.com/napari/napari-plugin-template#getting-started
+
+  and review the napari docs for plugin developers:
+  https://napari.org/stable/plugins/index.html
+  -->
+#+end_html
+
+** Installation
+:PROPERTIES:
+:CUSTOM_ID: installation
+:END:
+You can install =pyphenix= via [[https://pypi.org/project/pip/][pip]]:
+
+#+begin_example
+pip install pyphenix
+#+end_example
+
+If napari is not already installed, you can install =pyphenix= with
+napari and Qt via:
+
+#+begin_example
+pip install "pyphenix[all]"
+#+end_example
+
+To install latest development version :
+
+#+begin_example
+pip install git+https://github.com/ferrinm/pyphenix.git
+#+end_example
+
+** Contributing
+:PROPERTIES:
+:CUSTOM_ID: contributing
+:END:
+Contributions are very welcome. Tests can be run with
+[[https://tox.readthedocs.io/en/latest/][tox]], please ensure the
+coverage at least stays the same before you submit a pull request.
+
+** License
+:PROPERTIES:
+:CUSTOM_ID: license
+:END:
+Distributed under the terms of the [GNU GPL v3.0] license, “pyphenix” is
+free and open source software
+
+** Issues
+:PROPERTIES:
+:CUSTOM_ID: issues
+:END:
+If you encounter any problems, please
+[[https://github.com/ferrinm/pyphenix/issues][file an issue]] along with
+a detailed description.
+
+[cite:@napari]: https://github.com/napari [MIT]:
+http://opensource.org/licenses/MIT [BSD-3]:
+http://opensource.org/licenses/BSD-3-Clause [GNU GPL v3.0]:
+http://www.gnu.org/licenses/gpl-3.0.txt [GNU LGPL v3.0]:
+http://www.gnu.org/licenses/lgpl-3.0.txt [Apache Software License 2.0]:
+http://www.apache.org/licenses/LICENSE-2.0 [Mozilla Public License 2.0]:
+https://www.mozilla.org/media/MPL/2.0/index.txt
+[napari-plugin-template]:
+https://github.com/napari/napari-plugin-template
