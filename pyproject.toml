@@ -30,24 +30,28 @@ requires-python = ">=3.10"
 # See best practices: https://napari.org/stable/plugins/building_a_plugin/best_practices.html
 dependencies = [
     "numpy",
-    "magicgui",
-    "qtpy",
-    "scikit-image",
-    "jupyter>=1.1.1",
+    "Pillow",
 ]
 
 [project.optional-dependencies]
-# Allow easily installation with the full, default napari installation
-# (including Qt backend) using pyphenix[all].
-all = ["napari[all]"]
+# Full GUI install: pip install 'pyphenix[napari]'
+napari = [
+    "napari[all]>=0.4.19",
+    "qtpy",
+    "pandas",
+]
+# Backwards-compatible alias
+all = ["pyphenix[napari]"]
 
 [dependency-groups]
 dev = [
     "tox-uv",
-    "pytest",  # https://docs.pytest.org/en/latest/contents.html
-    "pytest-cov",  # https://pytest-cov.readthedocs.io/en/latest/
-    "pytest-qt",  # https://pytest-qt.readthedocs.io/en/latest/
-    "napari[qt]",  # test with napari's default Qt bindings
+    "pytest",
+    "pytest-cov",
+    "pytest-qt",
+    "napari[qt]",
+    "pandas",
+    "Pillow",
 ]
 
 [project.entry-points."napari.manifest"]

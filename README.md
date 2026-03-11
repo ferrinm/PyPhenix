@@ -25,25 +25,54 @@ https://napari.org/stable/plugins/index.html
 
 ## Installation
 
-You can install `pyphenix` via [pip]:
+### Reader only (no GUI, no napari required)
+
+If you only need the `OperaPhenixReader` — for example on a server or in a
+headless analysis pipeline — install the base package:
 
 ```
 pip install pyphenix
 ```
 
-If napari is not already installed, you can install `pyphenix` with napari and Qt via:
+This installs only `numpy` and `Pillow`. napari, Qt, and pandas are **not**
+required and will **not** be installed.
+
+```python
+from pyphenix import OperaPhenixReader
+
+reader = OperaPhenixReader("/path/to/experiment")
+data, metadata = reader.read_data(row="D", column=4)
+```
+
+### Full GUI install (napari widget)
+
+To use the interactive napari widget, install with the `napari` extra:
 
 ```
-pip install "pyphenix[all]"
+pip install "pyphenix[napari]"
 ```
 
+This additionally installs `napari`, `qtpy`, and `pandas`.
 
-To install latest development version :
+```python
+from pyphenix import launch_viewer
+
+viewer, widget = launch_viewer("/path/to/experiment")
+```
+
+Alternatively, if napari is already installed in your environment, the base
+install is sufficient — pyphenix will detect napari at import time and make
+the widget available automatically:
+
+```
+pip install pyphenix
+```
+
+### Latest development version
 
 ```
 pip install git+https://github.com/ferrinm/pyphenix.git
 ```
-
 
 
 ## Contributing
