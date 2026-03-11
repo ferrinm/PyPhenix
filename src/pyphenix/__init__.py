@@ -12,7 +12,7 @@ try:
 except (ImportError, ModuleNotFoundError):
     PhenixDataLoaderWidget = None
 
-def launch_viewer(experiment_path=None):
+def launch_viewer(experiment_path=None, metadata_csv=None):
     """
     Launch napari viewer with pyphenix widget.
 
@@ -21,6 +21,10 @@ def launch_viewer(experiment_path=None):
     experiment_path : str, optional
         Path to Opera Phenix experiment directory.
         If provided, the experiment will be automatically loaded.
+    metadata_csv : str, optional
+        Path to an experimental metadata CSV file.
+        If provided, the metadata will be loaded after the experiment.
+        Requires *experiment_path* to also be provided.
 
     Returns
     -------
@@ -38,6 +42,11 @@ def launch_viewer(experiment_path=None):
     --------
     >>> from pyphenix import launch_viewer
     >>> viewer, widget = launch_viewer('/path/to/experiment')
+
+    >>> viewer, widget = launch_viewer(
+    ...     '/path/to/experiment',
+    ...     metadata_csv='/path/to/plate_metadata.csv',
+    ... )
     """
     try:
         import napari
@@ -62,6 +71,10 @@ def launch_viewer(experiment_path=None):
     if experiment_path:
         widget.path_input.setText(experiment_path)
         widget._load_experiment()
+
+    if metadata_csv:
+        widget.csv_path_input.setText(metadata_csv)
+        widget._load_metadata_csv()
 
     return viewer, widget
 
