@@ -13,6 +13,49 @@ from qtpy.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 
 from ._reader import OperaPhenixReader
 
+def _normalise_well_str(well: str) -> str:
+    """
+    Normalise a well string to a canonical form ``<letter><2-digit col>``.
+
+    Handles inputs like:
+    - ``"D4"``, ``"D04"``, ``"d04"`` (letter + column)
+    - ``"2_3"``, ``"02_03"`` (numeric row_col)
+
+    Parameters
+    ----------
+    well : str
+        Well identifier in any supported format.
+
+    Returns
+    -------
+    str
+        Canonical well string, e.g. ``"B03"``.
+    """
+    well = well.strip()
+    if not well:
+        return well
+
+    # Check for "row_col" numeric format (e.g. "2_3", "02_03")
+    if '_' in well:
+        parts = well.split('_', 1)
+        try:
+            row_num = int(parts[0])
+            col_num = int(parts[1])
+            letter = chr(ord('A') + row_num - 1)
+            return f"{letter}{col_num:02d}"
+        except (ValueError, IndexError):
+            pass
+
+    # Standard letter+column format
+    letter = well[0].upper()
+    if letter.isalpha():
+        col_str = well[1:].lstrip("0") or "0"
+        try:
+            return f"{letter}{int(col_str):02d}"
+        except ValueError:
+            pass
+
+    return well
 
 class CollapsibleSection(QWidget):
     """A collapsible section with arrow indicator."""
@@ -165,7 +208,7 @@ class MetadataFilterWidget(QWidget):
         Raises
         ------
         ValueError
-            If *well_column* is not found in the CSV.
+            If no well column can be identified in the CSV.
         """
         df = pd.read_csv(csv_path)
 
@@ -173,7 +216,8 @@ class MetadataFilterWidget(QWidget):
         if well_column not in df.columns:
             candidates = [c for c in df.columns if "well" in c.lower()]
             exact = [c for c in candidates if c.lower() == "well"]
-            dest = [c for c in candidates if "destination" in c.lower()]
+            dest = [c for c in candidates
+                    if "destination" in c.lower()]
 
             if exact:
                 well_column = exact[0]
@@ -182,16 +226,36 @@ class MetadataFilterWidget(QWidget):
             elif candidates:
                 well_column = candidates[0]
             else:
-                raise ValueError(
-                    f"Could not find a well column in CSV. "
-                    f"Available columns: {list(df.columns)}"
-                )
+                # Last resort: synthesise a well column from Row + Column
+                row_cols = [c for c in df.columns
+                            if c.lower() == "row"]
+                col_cols = [c for c in df.columns
+                            if c.lower() == "column"]
+
+                if row_cols and col_cols:
+                    row_col_name = row_cols[0]
+                    col_col_name = col_cols[0]
+
+                    # Build "row_col" string, then normalise to letter format
+                    df["_well"] = (
+                        df[row_col_name].astype(str)
+                        + "_"
+                        + df[col_col_name].astype(str)
+                    )
+                    df["_well"] = df["_well"].apply(_normalise_well_str)
+                    well_column = "_well"
+                else:
+                    raise ValueError(
+                        f"Could not find a well column in CSV. "
+                        f"Available columns: {list(df.columns)}"
+                    )
 
         self._well_column = well_column
         self._metadata_df = df
 
         self._filter_columns = [
-            c for c in df.columns if c != well_column
+            c for c in df.columns
+            if c != well_column and not c.startswith("_")
         ]
 
         self._build_filter_widgets()
@@ -213,7 +277,8 @@ class MetadataFilterWidget(QWidget):
         Parameters
         ----------
         well : str
-            Well identifier (e.g. ``"D04"``).
+            Well identifier in any supported format (e.g. ``"D04"``,
+            ``"4_2"``, ``"d4"``).
 
         Returns
         -------
@@ -223,10 +288,20 @@ class MetadataFilterWidget(QWidget):
         """
         if self._metadata_df is None or self._well_column is None:
             return None
+
+        # Try exact match first (fast path)
         rows = self._metadata_df[self._metadata_df[self._well_column] == well]
-        if rows.empty:
-            return None
-        return rows.iloc[0].to_dict()
+        if not rows.empty:
+            return rows.iloc[0].to_dict()
+
+        # Fall back to normalised comparison
+        normalised = _normalise_well_str(well)
+        for _, row in self._metadata_df.iterrows():
+            csv_well = str(row[self._well_column])
+            if _normalise_well_str(csv_well) == normalised:
+                return row.to_dict()
+
+        return None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -802,10 +877,6 @@ class PhenixDataLoaderWidget(QWidget):
     def _on_metadata_wells_filtered(self, filtered_wells: List[str]):
         """
         Handle the signal from MetadataFilterWidget when filtered wells change.
-
-        Updates the well combo box to show only the intersection of wells
-        that are (a) present in the experiment and (b) match the metadata
-        filter criteria.
         """
         if not self._all_experiment_wells:
             return
@@ -815,11 +886,11 @@ class PhenixDataLoaderWidget(QWidget):
         else:
             csv_set = set()
             for w in filtered_wells:
-                csv_set.add(self._normalise_well_str(w))
+                csv_set.add(_normalise_well_str(w))
 
             display_wells = [
                 w for w in self._all_experiment_wells
-                if self._normalise_well_str(w) in csv_set
+                if _normalise_well_str(w) in csv_set
             ]
 
         current = self.well_combo.currentText()
@@ -833,18 +904,6 @@ class PhenixDataLoaderWidget(QWidget):
         self.well_combo.blockSignals(False)
 
         self._on_well_changed()
-
-    @staticmethod
-    def _normalise_well_str(well: str) -> str:
-        """
-        Normalise a well string to a canonical form ``<letter><2-digit col>``.
-        """
-        well = well.strip()
-        if not well:
-            return well
-        letter = well[0].upper()
-        col_str = well[1:].lstrip("0") or "0"
-        return f"{letter}{int(col_str):02d}"
 
     # ------------------------------------------------------------------
     # Experiment loading & selector population
