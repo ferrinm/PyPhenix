@@ -2,8 +2,8 @@
 :PROPERTIES:
 :CUSTOM_ID: pyphenix
 :END:
-[[https://github.com/ferrinm/pyphenix/raw/main/LICENSE][[[https://img.shields.io/pypi/l/pyphenix.svg?color=green]]]]
-[[https://pypi.org/project/pyphenix][[[https://img.shields.io/pypi/v/pyphenix.svg?color=green]]]]
+[[https://github.com/ferrinm/pyphenix/raw/main/LICENSE][[[https://img.shields.io/pypi/l/pyphenix.svg?color=green]​]​]]
+[[https://pypi.org/project/pyphenix][https://img.shields.io/pypi/v/pyphenix.svg?color=green]]
 [[https://python.org][[[https://img.shields.io/pypi/pyversions/pyphenix.svg?color=green]]]]
 [[https://github.com/ferrinm/pyphenix/actions][[[https://github.com/ferrinm/pyphenix/workflows/tests/badge.svg]]]]
 [[https://codecov.io/gh/ferrinm/pyphenix][[[https://codecov.io/gh/ferrinm/pyphenix/branch/main/graph/badge.svg]]]]

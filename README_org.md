@@ -12,8 +12,8 @@
 
 # pyphenix
 
-[[[https://img.shields.io/pypi/l/pyphenix.svg?color=green](https://github.com/ferrinm/pyphenix/raw/main/LICENSE)]]
-[[[https://img.shields.io/pypi/v/pyphenix.svg?color=green](https://pypi.org/project/pyphenix)]]
+[[[https://img.shields.io/pypi/l/pyphenix.svg?color=green]​]​](https://github.com/ferrinm/pyphenix/raw/main/LICENSE)
+[![img](https://img.shields.io/pypi/v/pyphenix.svg?color=green)](https://pypi.org/project/pyphenix)
 [[[https://img.shields.io/pypi/pyversions/pyphenix.svg?color=green](https://python.org)]]
 [[[https://github.com/ferrinm/pyphenix/workflows/tests/badge.svg](https://github.com/ferrinm/pyphenix/actions)]]
 [[[https://codecov.io/gh/ferrinm/pyphenix/branch/main/graph/badge.svg](https://codecov.io/gh/ferrinm/pyphenix)]]
@@ -30,7 +30,7 @@ This [napari](https://github.com/napari/napari) plugin was generated
 with [copier](https://copier.readthedocs.io/en/stable/) using the
 [napari-plugin-template] (None).
 
-<div class="html" id="orgd757f98">
+<div class="html" id="org4350ae8">
 <p>
 &lt;!&#x2013;
 Don&rsquo;t miss the full getting started guide to set up your new package:
