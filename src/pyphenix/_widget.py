@@ -3,12 +3,12 @@ from napari.utils import notifications
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                             QComboBox, QListWidget, QLabel, QCheckBox,
                             QFrame, QToolButton, QSizePolicy,
                             QGroupBox, QAbstractItemView, QLineEdit, QFileDialog,
-                            QScrollArea)
+                            QScrollArea, QRadioButton, QButtonGroup)
 from qtpy.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 
 from ._reader import OperaPhenixReader
@@ -172,9 +172,7 @@ class MetadataFilterWidget(QWidget):
         # Try to auto-detect the well column if the given name is not present
         if well_column not in df.columns:
             candidates = [c for c in df.columns if "well" in c.lower()]
-            # Prefer columns whose name is exactly "well" (case-insensitive)
             exact = [c for c in candidates if c.lower() == "well"]
-            # Also consider "destination_well" which appears in plate-map CSVs
             dest = [c for c in candidates if "destination" in c.lower()]
 
             if exact:
@@ -192,7 +190,6 @@ class MetadataFilterWidget(QWidget):
         self._well_column = well_column
         self._metadata_df = df
 
-        # Determine filterable columns (everything except the well column)
         self._filter_columns = [
             c for c in df.columns if c != well_column
         ]
@@ -229,7 +226,6 @@ class MetadataFilterWidget(QWidget):
         rows = self._metadata_df[self._metadata_df[self._well_column] == well]
         if rows.empty:
             return None
-        # Return first matching row as dict
         return rows.iloc[0].to_dict()
 
     # ------------------------------------------------------------------
@@ -258,7 +254,6 @@ class MetadataFilterWidget(QWidget):
         )
         self._layout.addWidget(info_label)
 
-        # Select / Clear all filters buttons
         btn_row = QHBoxLayout()
         select_all_btn = QPushButton("Select All Filters")
         select_all_btn.clicked.connect(self._select_all_filters)
@@ -270,7 +265,6 @@ class MetadataFilterWidget(QWidget):
         self._layout.addLayout(btn_row)
 
         for col in self._filter_columns:
-            # Skip columns where every value is the same (not useful for filtering)
             unique_vals = self._metadata_df[col].dropna().unique()
             if len(unique_vals) <= 1:
                 continue
@@ -280,16 +274,13 @@ class MetadataFilterWidget(QWidget):
 
             list_widget = QListWidget()
             list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
-            # Sort values for readability
             sorted_vals = sorted(unique_vals, key=lambda v: str(v))
             for val in sorted_vals:
                 list_widget.addItem(str(val))
 
-            # Limit height based on item count
             max_visible = min(len(sorted_vals), 6)
             list_widget.setMaximumHeight(max_visible * 22 + 4)
 
-            # Connect selection change → refilter
             list_widget.itemSelectionChanged.connect(self._on_filter_changed)
 
             group_layout.addWidget(list_widget)
@@ -298,11 +289,9 @@ class MetadataFilterWidget(QWidget):
             self._layout.addWidget(group)
             self._filter_lists[col] = list_widget
 
-        # Filtered wells label
         self._filtered_label = QLabel("")
         self._layout.addWidget(self._filtered_label)
 
-        # Initial state: no filters active → all wells
         self._on_filter_changed()
 
     def _on_filter_changed(self):
@@ -315,7 +304,6 @@ class MetadataFilterWidget(QWidget):
         for col, list_widget in self._filter_lists.items():
             selected_items = list_widget.selectedItems()
             if not selected_items:
-                # No selection in this column → no constraint from this column
                 continue
             selected_vals = {item.text() for item in selected_items}
             mask &= self._metadata_df[col].astype(str).isin(selected_vals)
@@ -350,6 +338,11 @@ class MetadataFilterWidget(QWidget):
 class PhenixDataLoaderWidget(QWidget):
     """Interactive widget for loading and visualizing Opera Phenix data in Napari."""
 
+    # Visualization mode constants
+    MODE_REPLACE = "replace"
+    MODE_NEW_WINDOW = "new_window"
+    MODE_SIDE_BY_SIDE = "side_by_side"
+
     def __init__(self, napari_viewer):
         """
         Initialize the data loader widget.
@@ -372,6 +365,16 @@ class PhenixDataLoaderWidget(QWidget):
         self._well_display_to_rc: Dict[str, tuple] = {}
         # All wells available from the experiment (display strings)
         self._all_experiment_wells: List[str] = []
+
+        # ── Multi-well state ──────────────────────────────────────────
+        # Track additional viewer windows opened via "New Window" mode
+        self._extra_viewers: List[napari.Viewer] = []
+        # Track tile layout for side-by-side mode.
+        # Each entry: {'label': str, 'translate_y': float, 'translate_x': float,
+        #              'extent_y': float, 'extent_x': float, 'layers': list[str]}
+        self._tiles: List[Dict] = []
+        # Points layer used for text annotations in side-by-side mode
+        self._annotation_layers: List[str] = []
 
         # Build the widget UI
         self._build_ui()
@@ -431,7 +434,6 @@ class PhenixDataLoaderWidget(QWidget):
         csv_path_layout.addWidget(self.csv_browse_btn)
         meta_csv_layout.addLayout(csv_path_layout)
 
-        # Well column name override (optional)
         well_col_layout = QHBoxLayout()
         well_col_layout.addWidget(QLabel("Well column:"))
         self.well_col_input = QLineEdit()
@@ -450,7 +452,6 @@ class PhenixDataLoaderWidget(QWidget):
         self.csv_info_label = QLabel("")
         meta_csv_layout.addWidget(self.csv_info_label)
 
-        # The dynamic filter widget
         self.metadata_filter = MetadataFilterWidget()
         self.metadata_filter.wells_filtered.connect(self._on_metadata_wells_filtered)
         meta_csv_layout.addWidget(self.metadata_filter)
@@ -467,10 +468,11 @@ class PhenixDataLoaderWidget(QWidget):
         well_layout.addWidget(QLabel("Select Well:"))
         well_layout.addWidget(self.well_combo)
 
-        # Label to show metadata for the selected well
         self.well_meta_label = QLabel("")
         self.well_meta_label.setWordWrap(True)
-        self.well_meta_label.setStyleSheet("QLabel { color: palette(text); font-size: 11px; }")
+        self.well_meta_label.setStyleSheet(
+            "QLabel { color: palette(text); font-size: 11px; }"
+        )
         well_layout.addWidget(self.well_meta_label)
 
         well_group.setContentLayout(well_layout)
@@ -497,9 +499,13 @@ class PhenixDataLoaderWidget(QWidget):
 
         time_buttons = QHBoxLayout()
         self.time_select_all_btn = QPushButton("Select All")
-        self.time_select_all_btn.clicked.connect(lambda: self._select_all(self.time_list))
+        self.time_select_all_btn.clicked.connect(
+            lambda: self._select_all(self.time_list)
+        )
         self.time_clear_all_btn = QPushButton("Clear All")
-        self.time_clear_all_btn.clicked.connect(lambda: self._clear_all(self.time_list))
+        self.time_clear_all_btn.clicked.connect(
+            lambda: self._clear_all(self.time_list)
+        )
         time_buttons.addWidget(self.time_select_all_btn)
         time_buttons.addWidget(self.time_clear_all_btn)
         time_layout.addLayout(time_buttons)
@@ -518,9 +524,13 @@ class PhenixDataLoaderWidget(QWidget):
 
         channel_buttons = QHBoxLayout()
         self.channel_select_all_btn = QPushButton("Select All")
-        self.channel_select_all_btn.clicked.connect(lambda: self._select_all(self.channel_list))
+        self.channel_select_all_btn.clicked.connect(
+            lambda: self._select_all(self.channel_list)
+        )
         self.channel_clear_all_btn = QPushButton("Clear All")
-        self.channel_clear_all_btn.clicked.connect(lambda: self._clear_all(self.channel_list))
+        self.channel_clear_all_btn.clicked.connect(
+            lambda: self._clear_all(self.channel_list)
+        )
         channel_buttons.addWidget(self.channel_select_all_btn)
         channel_buttons.addWidget(self.channel_clear_all_btn)
         channel_layout.addLayout(channel_buttons)
@@ -539,9 +549,13 @@ class PhenixDataLoaderWidget(QWidget):
 
         z_buttons = QHBoxLayout()
         self.z_select_all_btn = QPushButton("Select All")
-        self.z_select_all_btn.clicked.connect(lambda: self._select_all(self.z_list))
+        self.z_select_all_btn.clicked.connect(
+            lambda: self._select_all(self.z_list)
+        )
         self.z_clear_all_btn = QPushButton("Clear All")
-        self.z_clear_all_btn.clicked.connect(lambda: self._clear_all(self.z_list))
+        self.z_clear_all_btn.clicked.connect(
+            lambda: self._clear_all(self.z_list)
+        )
         z_buttons.addWidget(self.z_select_all_btn)
         z_buttons.addWidget(self.z_clear_all_btn)
         z_layout.addLayout(z_buttons)
@@ -554,6 +568,62 @@ class PhenixDataLoaderWidget(QWidget):
         z_group.setContentLayout(z_layout)
         layout.addWidget(z_group)
 
+        # ── Visualization mode ────────────────────────────────────────
+        vis_group = CollapsibleSection("Visualization Mode")
+        vis_layout = QVBoxLayout()
+
+        self._vis_mode_group = QButtonGroup(self)
+
+        self._radio_replace = QRadioButton("Replace current view")
+        self._radio_replace.setToolTip(
+            "Clear the viewer and show only the new data selection."
+        )
+        self._radio_replace.setChecked(True)
+
+        self._radio_new_window = QRadioButton("Open in new window")
+        self._radio_new_window.setToolTip(
+            "Keep the current viewer untouched and open a\n"
+            "second napari window for the new data selection."
+        )
+
+        self._radio_side_by_side = QRadioButton("Add side-by-side")
+        self._radio_side_by_side.setToolTip(
+            "Add the new data next to previously loaded data\n"
+            "in the same viewer (tiled layout)."
+        )
+
+        self._vis_mode_group.addButton(self._radio_replace)
+        self._vis_mode_group.addButton(self._radio_new_window)
+        self._vis_mode_group.addButton(self._radio_side_by_side)
+
+        vis_layout.addWidget(self._radio_replace)
+        vis_layout.addWidget(self._radio_new_window)
+        vis_layout.addWidget(self._radio_side_by_side)
+
+        # Padding control for side-by-side
+        padding_layout = QHBoxLayout()
+        padding_layout.addWidget(QLabel("Tile gap (%):"))
+        self._tile_gap_input = QLineEdit("5")
+        self._tile_gap_input.setToolTip(
+            "Gap between tiled datasets as a percentage\n"
+            "of the image width. Only used in side-by-side mode."
+        )
+        self._tile_gap_input.setMaximumWidth(50)
+        padding_layout.addWidget(self._tile_gap_input)
+        padding_layout.addStretch()
+        vis_layout.addLayout(padding_layout)
+
+        # Reset tiles button
+        self._reset_tiles_btn = QPushButton("Reset Tiled Layout")
+        self._reset_tiles_btn.setToolTip(
+            "Clear all tiled datasets and start fresh."
+        )
+        self._reset_tiles_btn.clicked.connect(self._reset_tiles)
+        vis_layout.addWidget(self._reset_tiles_btn)
+
+        vis_group.setContentLayout(vis_layout)
+        layout.addWidget(vis_group)
+
         # ── Display options ───────────────────────────────────────────
         display_group = CollapsibleSection("Display Options")
         display_layout = QVBoxLayout()
@@ -561,22 +631,28 @@ class PhenixDataLoaderWidget(QWidget):
         self.ffc_checkbox = QCheckBox("Apply flat field correction")
         self.ffc_checkbox.setChecked(True)
         self.ffc_checkbox.setToolTip(
-            "Apply flat field correction to remove vignetting and illumination non-uniformity.\n"
+            "Apply flat field correction to remove vignetting and "
+            "illumination non-uniformity.\n"
             "Requires FFC profiles in the experiment directory.\n"
             "Not compatible with lazy loading mode."
         )
         display_layout.addWidget(self.ffc_checkbox)
 
-        self.lazy_loading_checkbox = QCheckBox("Use lazy loading (load images on-demand)")
+        self.lazy_loading_checkbox = QCheckBox(
+            "Use lazy loading (load images on-demand)"
+        )
         self.lazy_loading_checkbox.setChecked(False)
         self.lazy_loading_checkbox.setToolTip(
             "Load images on-demand instead of loading all into memory at once.\n"
-            "Faster initial loading for large datasets, but not compatible with:\n"
+            "Faster initial loading for large datasets, but not compatible "
+            "with:\n"
             "  • Flat field correction\n"
             "  • Field stitching\n\n"
             "Images are cached in memory as accessed for faster repeat viewing."
         )
-        self.lazy_loading_checkbox.stateChanged.connect(self._on_lazy_loading_changed)
+        self.lazy_loading_checkbox.stateChanged.connect(
+            self._on_lazy_loading_changed
+        )
         display_layout.addWidget(self.lazy_loading_checkbox)
 
         self.timestamp_checkbox = QCheckBox("Show timepoint timestamp")
@@ -667,6 +743,26 @@ class PhenixDataLoaderWidget(QWidget):
         self._set_controls_enabled(False)
 
     # ------------------------------------------------------------------
+    # Visualization mode helpers
+    # ------------------------------------------------------------------
+
+    def _get_vis_mode(self) -> str:
+        """Return the currently selected visualization mode string."""
+        if self._radio_new_window.isChecked():
+            return self.MODE_NEW_WINDOW
+        if self._radio_side_by_side.isChecked():
+            return self.MODE_SIDE_BY_SIDE
+        return self.MODE_REPLACE
+
+    def _get_tile_gap_fraction(self) -> float:
+        """Return the tile gap as a fraction (0–1) of image width."""
+        try:
+            pct = float(self._tile_gap_input.text())
+        except ValueError:
+            pct = 5.0
+        return max(0.0, pct / 100.0)
+
+    # ------------------------------------------------------------------
     # Metadata CSV handling
     # ------------------------------------------------------------------
 
@@ -697,7 +793,9 @@ class PhenixDataLoaderWidget(QWidget):
             )
             notifications.show_info("Metadata CSV loaded successfully!")
         except Exception as e:
-            notifications.show_error(f"Error loading metadata CSV: {str(e)}")
+            notifications.show_error(
+                f"Error loading metadata CSV: {str(e)}"
+            )
             import traceback
             traceback.print_exc()
 
@@ -708,22 +806,13 @@ class PhenixDataLoaderWidget(QWidget):
         Updates the well combo box to show only the intersection of wells
         that are (a) present in the experiment and (b) match the metadata
         filter criteria.
-
-        Parameters
-        ----------
-        filtered_wells : list of str
-            Well identifiers from the CSV that match active filters.
         """
         if not self._all_experiment_wells:
             return
 
         if not filtered_wells:
-            # No filter constraint → show all experiment wells
             display_wells = self._all_experiment_wells
         else:
-            # Normalise the CSV well names so they match the display format.
-            # CSV may use "D04" while display uses "D04" – they should match
-            # directly, but we also handle leading-zero differences.
             csv_set = set()
             for w in filtered_wells:
                 csv_set.add(self._normalise_well_str(w))
@@ -733,7 +822,6 @@ class PhenixDataLoaderWidget(QWidget):
                 if self._normalise_well_str(w) in csv_set
             ]
 
-        # Preserve currently selected well if still in the filtered set
         current = self.well_combo.currentText()
 
         self.well_combo.blockSignals(True)
@@ -744,15 +832,12 @@ class PhenixDataLoaderWidget(QWidget):
             self.well_combo.setCurrentText(current)
         self.well_combo.blockSignals(False)
 
-        # Trigger well-change logic for the (possibly new) selection
         self._on_well_changed()
 
     @staticmethod
     def _normalise_well_str(well: str) -> str:
         """
         Normalise a well string to a canonical form ``<letter><2-digit col>``.
-
-        Handles inputs like ``"D4"``, ``"D04"``, ``"d04"``.
         """
         well = well.strip()
         if not well:
@@ -791,12 +876,14 @@ class PhenixDataLoaderWidget(QWidget):
             if self.stitch_checkbox.isChecked():
                 self.stitch_checkbox.setChecked(False)
                 notifications.show_warning(
-                    "Field stitching disabled - not compatible with lazy loading mode"
+                    "Field stitching disabled - not compatible with "
+                    "lazy loading mode"
                 )
             if self.ffc_checkbox.isChecked():
                 self.ffc_checkbox.setChecked(False)
                 notifications.show_warning(
-                    "Flat field correction disabled - not compatible with lazy loading mode"
+                    "Flat field correction disabled - not compatible with "
+                    "lazy loading mode"
                 )
             self.stitch_checkbox.setEnabled(False)
             self.ffc_checkbox.setEnabled(False)
@@ -810,11 +897,13 @@ class PhenixDataLoaderWidget(QWidget):
         exp_path = self.path_input.text()
 
         if not exp_path:
-            notifications.show_warning("Please select an experiment directory")
+            notifications.show_warning(
+                "Please select an experiment directory"
+            )
             return
 
         try:
-            # Reset experimental metadata filters (keep CSV path for convenience)
+            # Reset experimental metadata filters
             self.metadata_filter.clear()
             self.csv_info_label.setText("")
             self.well_meta_label.setText("")
@@ -822,7 +911,6 @@ class PhenixDataLoaderWidget(QWidget):
             self.reader = OperaPhenixReader(exp_path)
             self.metadata = self.reader.metadata
 
-            # Check if FFC profiles were loaded
             ffc_status = ""
             if self.reader.ffc_profiles:
                 n_profiles = len(self.reader.ffc_profiles)
@@ -830,7 +918,10 @@ class PhenixDataLoaderWidget(QWidget):
                     1 for p in self.reader.ffc_profiles.values()
                     if p.has_correction()
                 )
-                ffc_status = f"<br>FFC profiles: {n_with_correction}/{n_profiles} channels"
+                ffc_status = (
+                    f"<br>FFC profiles: "
+                    f"{n_with_correction}/{n_profiles} channels"
+                )
                 self.ffc_checkbox.setEnabled(True)
                 self.ffc_checkbox.setToolTip(
                     f"Apply flat field correction to remove vignetting.\n"
@@ -851,23 +942,26 @@ class PhenixDataLoaderWidget(QWidget):
                 f"{ffc_status}"
             )
 
-            # Populate selectors
             self._populate_selectors()
 
-            # Enable controls
             self._set_controls_enabled(True)
             self.visualize_btn.setEnabled(True)
+
+            # Reset tiled layout state when loading new experiment
+            self._tiles = []
+            self._annotation_layers = []
 
             notifications.show_info("Experiment loaded successfully!")
 
         except Exception as e:
-            notifications.show_error(f"Error loading experiment: {str(e)}")
+            notifications.show_error(
+                f"Error loading experiment: {str(e)}"
+            )
             import traceback
             traceback.print_exc()
 
     def _populate_selectors(self):
         """Populate all selector widgets with experiment data."""
-        # Wells - convert to letter notation and build lookup maps
         self.well_combo.clear()
         self._well_display_to_rc = {}
         self._all_experiment_wells = []
@@ -882,24 +976,20 @@ class PhenixDataLoaderWidget(QWidget):
 
         self.well_combo.addItems(self._all_experiment_wells)
 
-        # Update fields for first well
         self._update_field_selector()
 
-        # Timepoints
         self.time_list.clear()
         self.time_list.addItems(
             [f"Timepoint {t}" for t in self.metadata.timepoints]
         )
         self.time_list.item(0).setSelected(True)
 
-        # Channels
         self.channel_list.clear()
         for ch_id in self.metadata.channel_ids:
             ch_name = self.metadata.channels[ch_id]['name']
             self.channel_list.addItem(f"Ch{ch_id}: {ch_name}")
         self._select_all(self.channel_list)
 
-        # Z-slices
         self.z_list.clear()
         self.z_list.addItems(
             [f"Z-plane {z}" for z in self.metadata.planes]
@@ -944,11 +1034,10 @@ class PhenixDataLoaderWidget(QWidget):
             self.well_meta_label.setText("")
             return
 
-        # Build a compact summary of the metadata
         lines = []
         for key, val in meta.items():
-            # Skip the well column itself
-            if self.metadata_filter._well_column and key == self.metadata_filter._well_column:
+            if (self.metadata_filter._well_column
+                    and key == self.metadata_filter._well_column):
                 continue
             lines.append(f"<b>{key}:</b> {val}")
 
@@ -1021,10 +1110,14 @@ class PhenixDataLoaderWidget(QWidget):
         try:
             self.timepoint_overlay = self.viewer.text_overlay
             self.timepoint_overlay.visible = True
-            self.viewer.dims.events.current_step.connect(self._update_timestamp)
+            self.viewer.dims.events.current_step.connect(
+                self._update_timestamp
+            )
             self._update_timestamp()
         except Exception as e:
-            notifications.show_error(f"Error adding timestamp overlay: {str(e)}")
+            notifications.show_error(
+                f"Error adding timestamp overlay: {str(e)}"
+            )
             self.timestamp_checkbox.setChecked(False)
 
     def _remove_timestamp_overlay(self):
@@ -1057,7 +1150,9 @@ class PhenixDataLoaderWidget(QWidget):
                 minutes = int((seconds % 3600) // 60)
                 secs = int(seconds % 60)
 
-                timestamp_str = f"{hours:02d}:{minutes:02d}:{secs:02d} (HH:MM:SS)"
+                timestamp_str = (
+                    f"{hours:02d}:{minutes:02d}:{secs:02d} (HH:MM:SS)"
+                )
 
                 self.viewer.text_overlay.text = timestamp_str
                 self.viewer.text_overlay.color = 'white'
@@ -1075,7 +1170,8 @@ class PhenixDataLoaderWidget(QWidget):
                 minutes = int((seconds % 3600) // 60)
                 secs = int(seconds % 60)
                 timestamp_str = (
-                    f"Single timepoint\n{hours:02d}:{minutes:02d}:{secs:02d}"
+                    f"Single timepoint\n"
+                    f"{hours:02d}:{minutes:02d}:{secs:02d}"
                 )
                 self.viewer.text_overlay.text = timestamp_str
                 self.viewer.text_overlay.position = 'top_right'
@@ -1109,8 +1205,12 @@ class PhenixDataLoaderWidget(QWidget):
                 metadata_path = output_path.with_suffix('.json')
                 import json
                 with open(metadata_path, 'w') as f:
-                    json.dump(self.current_metadata, f, indent=2, default=str)
-                notifications.show_info(f"Saved numpy array to: {output_path}")
+                    json.dump(
+                        self.current_metadata, f, indent=2, default=str
+                    )
+                notifications.show_info(
+                    f"Saved numpy array to: {output_path}"
+                )
                 print(f"Saved metadata to: {metadata_path}")
 
             elif save_format == 'ome-tiff':
@@ -1142,7 +1242,179 @@ class PhenixDataLoaderWidget(QWidget):
             traceback.print_exc()
 
     # ------------------------------------------------------------------
-    # Visualize
+    # Build a human-readable label for the current selection
+    # ------------------------------------------------------------------
+
+    def _build_selection_label(self, metadata: Dict) -> str:
+        """
+        Build a concise label string for the current data selection.
+
+        Parameters
+        ----------
+        metadata : dict
+            Metadata dict returned by ``reader.read_data``.
+
+        Returns
+        -------
+        str
+            E.g. ``"D04 – Field 1"`` or ``"D04 – Stitched"``.
+        """
+        well = metadata['well']
+        if metadata['stitched']:
+            field_str = "Stitched"
+        else:
+            field_str = f"Field {metadata['fields'][0]}"
+
+        label = f"{well} – {field_str}"
+
+        # Append experimental metadata summary if available
+        exp_meta = self.metadata_filter.get_metadata_for_well(well)
+        if exp_meta:
+            summary_keys = [
+                k for k in [
+                    'compound', 'cell_line', 'condition',
+                    'final_concentration',
+                ]
+                if k in exp_meta
+                   and k != self.metadata_filter._well_column
+            ]
+            if summary_keys:
+                parts = [str(exp_meta[k]) for k in summary_keys]
+                label += "\n" + " / ".join(parts)
+
+        return label
+
+    # ------------------------------------------------------------------
+    # Tiled (side-by-side) layout helpers
+    # ------------------------------------------------------------------
+
+    def _reset_tiles(self):
+        """Clear all tiles and reset the viewer for a fresh start."""
+        self._tiles = []
+        self._annotation_layers = []
+        self._remove_timestamp_overlay()
+        self.viewer.layers.clear()
+        self.current_data = None
+        self.current_metadata = None
+        self.save_btn.setEnabled(False)
+        notifications.show_info("Tiled layout reset.")
+
+    def _compute_next_tile_origin(
+        self, new_extent_y: float, new_extent_x: float
+    ) -> Tuple[float, float]:
+        """
+        Compute the (translate_y, translate_x) for the next tile.
+
+        Tiles are laid out left-to-right in a single row.  The gap between
+        tiles is controlled by the user's *tile gap %* input.
+
+        Parameters
+        ----------
+        new_extent_y : float
+            Height of the new dataset in scaled (physical) units.
+        new_extent_x : float
+            Width of the new dataset in scaled (physical) units.
+
+        Returns
+        -------
+        tuple of float
+            ``(translate_y, translate_x)`` for the new tile.
+        """
+        if not self._tiles:
+            return (0.0, 0.0)
+
+        gap_frac = self._get_tile_gap_fraction()
+
+        # Find the right edge of the rightmost existing tile
+        max_right = max(
+            t['translate_x'] + t['extent_x'] for t in self._tiles
+        )
+
+        # Use the average tile width as the reference for the gap
+        avg_width = np.mean([t['extent_x'] for t in self._tiles])
+        gap = avg_width * gap_frac
+
+        translate_x = max_right + gap
+        translate_y = 0.0  # Keep all tiles top-aligned
+
+        return (translate_y, translate_x)
+
+    def _add_annotation_to_viewer(
+        self,
+        target_viewer: napari.Viewer,
+        label_text: str,
+        position_yx: Tuple[float, float],
+        scale: tuple,
+        has_time_dim: bool,
+    ):
+        """
+        Add a text annotation as a Points layer with text properties.
+
+        Parameters
+        ----------
+        target_viewer : napari.Viewer
+            The viewer to add the annotation to.
+        label_text : str
+            Text to display.
+        position_yx : tuple of float
+            (Y, X) position in *world* (physical) coordinates for the anchor.
+        scale : tuple
+            Scale tuple matching the image layers — only used to determine
+            dimensionality, not applied to the points layer itself.
+        has_time_dim : bool
+            Whether the data has a leading time dimension in the viewer.
+        """
+        y_pos, x_pos = position_yx
+
+        # Build the point coordinate in world space.
+        # We set scale=(1,1,...) on the points layer so that the coordinates
+        # we supply ARE the world coordinates directly — no double-scaling.
+        if has_time_dim:
+            # 4-D viewer: (T, Z, Y, X) — place at t=0, z=0
+            point_coord = np.array([[0, 0, y_pos, x_pos]])
+            pts_scale = (1, 1, 1, 1)
+        else:
+            # 3-D viewer: (Z, Y, X) — place at z=0
+            point_coord = np.array([[0, y_pos, x_pos]])
+            pts_scale = (1, 1, 1)
+
+        layer_name = f"label: {label_text.splitlines()[0]}"
+
+        text_props = {
+            'text': [label_text],
+        }
+
+        # napari >=0.5 renamed edge_color → border_color and removed
+        # the old name.  Try the new API first, fall back to old.
+        points_kwargs = dict(
+            data=point_coord,
+            name=layer_name,
+            text=text_props,
+            size=0,  # invisible point
+            face_color='transparent',
+            scale=pts_scale,
+        )
+
+        try:
+            target_viewer.add_points(
+                border_color='transparent', **points_kwargs
+            )
+        except TypeError:
+            # Older napari that still uses edge_color
+            target_viewer.add_points(
+                edge_color='transparent', **points_kwargs
+            )
+
+        # Style the text after adding — napari sets defaults on add
+        layer = target_viewer.layers[layer_name]
+        layer.text.color = 'white'
+        layer.text.size = 14
+        layer.text.anchor = 'upper_left'
+
+        return layer_name
+
+    # ------------------------------------------------------------------
+    # Visualize – main entry point
     # ------------------------------------------------------------------
 
     def _visualize_data(self):
@@ -1222,20 +1494,21 @@ class PhenixDataLoaderWidget(QWidget):
 
             self.save_btn.setEnabled(True)
 
-            self._remove_timestamp_overlay()
-            self.viewer.layers.clear()
-
-            self._add_layers_to_viewer(data, metadata)
-
-            if self.timestamp_checkbox.isChecked():
-                self._add_timestamp_overlay()
+            # Dispatch to the correct visualization mode
+            mode = self._get_vis_mode()
+            if mode == self.MODE_REPLACE:
+                self._visualize_replace(data, metadata)
+            elif mode == self.MODE_NEW_WINDOW:
+                self._visualize_new_window(data, metadata)
+            elif mode == self.MODE_SIDE_BY_SIDE:
+                self._visualize_side_by_side(data, metadata)
 
             if lazy_loading:
                 from ._reader import LazyImageArray
                 if isinstance(data, LazyImageArray):
                     notifications.show_info(
-                        f"Lazy loading enabled. Images will load as you navigate. "
-                        f"Cache size: {data._max_cache_size} images"
+                        f"Lazy loading enabled. Images will load as you "
+                        f"navigate. Cache size: {data._max_cache_size} images"
                     )
 
             notifications.show_info("Data loaded successfully!")
@@ -1245,8 +1518,250 @@ class PhenixDataLoaderWidget(QWidget):
             import traceback
             traceback.print_exc()
 
-    def _add_layers_to_viewer(self, data, metadata):
-        """Add data layers to the viewer."""
+    # ------------------------------------------------------------------
+    # Mode 1: Replace
+    # ------------------------------------------------------------------
+
+    def _visualize_replace(self, data, metadata):
+        """Clear the viewer and display the new data (original behaviour)."""
+        self._remove_timestamp_overlay()
+        self.viewer.layers.clear()
+        self._tiles = []
+        self._annotation_layers = []
+
+        self._add_layers_to_viewer(self.viewer, data, metadata)
+
+        if self.timestamp_checkbox.isChecked():
+            self._add_timestamp_overlay()
+
+    # ------------------------------------------------------------------
+    # Mode 2: New Window
+    # ------------------------------------------------------------------
+
+    def _visualize_new_window(self, data, metadata):
+        """Open the data in a new napari viewer window."""
+        # If the primary viewer is empty, use it instead of creating new
+        if len(self.viewer.layers) == 0:
+            self._add_layers_to_viewer(self.viewer, data, metadata)
+            label = self._build_selection_label(metadata)
+            scale = self._get_scale_tuple(metadata, data)
+            has_time = data.shape[0] > 1
+            self._add_annotation_to_viewer(
+                self.viewer, label, (0.0, 0.0), scale, has_time
+            )
+            if self.timestamp_checkbox.isChecked():
+                self._add_timestamp_overlay()
+            return
+
+        # Add label annotation to the primary viewer if it doesn't have one yet
+        if not self._annotation_layers:
+            if self.current_metadata is not None:
+                # We need to figure out what the *previous* data was.
+                # Use the viewer title which was set by the previous load.
+                prev_label = self.viewer.title
+                # Add a simple annotation for the existing data
+                first_layer = self.viewer.layers[0]
+                scale = first_layer.scale
+                has_time = len(first_layer.data.shape) >= 4
+                name = self._add_annotation_to_viewer(
+                    self.viewer, prev_label, (0.0, 0.0),
+                    tuple(scale[-3:]), has_time
+                )
+                self._annotation_layers.append(name)
+
+        # Create new viewer
+        new_viewer = napari.Viewer(
+            title=self._build_selection_label(metadata).splitlines()[0]
+        )
+        self._extra_viewers.append(new_viewer)
+
+        self._add_layers_to_viewer(new_viewer, data, metadata)
+
+        # Add annotation to new window
+        label = self._build_selection_label(metadata)
+        scale = self._get_scale_tuple(metadata, data)
+        has_time = data.shape[0] > 1
+        self._add_annotation_to_viewer(
+            new_viewer, label, (0.0, 0.0), scale, has_time
+        )
+
+        new_viewer.scale_bar.visible = True
+        new_viewer.scale_bar.unit = "µm"
+        new_viewer.reset_view()
+
+    # ------------------------------------------------------------------
+    # Mode 3: Side-by-side
+    # ------------------------------------------------------------------
+
+    def _visualize_side_by_side(self, data, metadata):
+        """Add the new data next to existing data in the same viewer."""
+        scale = self._get_scale_tuple(metadata, data)
+        has_time = data.shape[0] > 1
+
+        # Calculate physical extents of the new data
+        pixel_size_x = metadata['pixel_size']['x'] * 1e6
+        pixel_size_y = metadata['pixel_size']['y'] * 1e6
+        extent_y = data.shape[-2] * pixel_size_y
+        extent_x = data.shape[-1] * pixel_size_x
+
+        # If this is the first tile and there is already data in the viewer,
+        # register the existing data as tile 0.
+        if not self._tiles and len(self.viewer.layers) > 0:
+            self._register_existing_as_tile_zero()
+
+        # Compute where to place the new tile
+        translate_y, translate_x = self._compute_next_tile_origin(
+            extent_y, extent_x
+        )
+
+        # Record the tile
+        tile_label = self._build_selection_label(metadata)
+        tile_info = {
+            'label': tile_label,
+            'translate_y': translate_y,
+            'translate_x': translate_x,
+            'extent_y': extent_y,
+            'extent_x': extent_x,
+            'layers': [],
+        }
+
+        # Add channel layers with translation
+        layer_names = self._add_layers_to_viewer(
+            self.viewer, data, metadata,
+            translate_yx=(translate_y, translate_x),
+            name_prefix=f"[{metadata['well']}] ",
+        )
+        tile_info['layers'] = layer_names
+
+        self._tiles.append(tile_info)
+
+        # Add text annotation for this tile
+        anno_name = self._add_annotation_to_viewer(
+            self.viewer,
+            tile_label,
+            (translate_y, translate_x),
+            scale,
+            has_time,
+        )
+        self._annotation_layers.append(anno_name)
+
+        if self.timestamp_checkbox.isChecked():
+            self._add_timestamp_overlay()
+
+        self.viewer.reset_view()
+
+    def _register_existing_as_tile_zero(self):
+        """
+        Retroactively register layers that are already in the viewer as
+        the first tile so the tiling logic knows about them.
+        """
+        if not self.viewer.layers:
+            return
+
+        # Find the bounding box of existing layers
+        min_y = float('inf')
+        min_x = float('inf')
+        max_y = float('-inf')
+        max_x = float('-inf')
+
+        layer_names = []
+        for layer in self.viewer.layers:
+            layer_names.append(layer.name)
+            # Get the extent in world coordinates
+            extent = layer.extent
+            # extent.world is ((min_dims...), (max_dims...))
+            world_min = extent.world[0]
+            world_max = extent.world[1]
+            # Last two dims are Y, X
+            min_y = min(min_y, world_min[-2])
+            min_x = min(min_x, world_min[-1])
+            max_y = max(max_y, world_max[-2])
+            max_x = max(max_x, world_max[-1])
+
+        extent_y = max_y - min_y
+        extent_x = max_x - min_x
+
+        # Build label from current viewer title
+        prev_label = self.viewer.title or "Previous data"
+
+        tile_info = {
+            'label': prev_label,
+            'translate_y': min_y,
+            'translate_x': min_x,
+            'extent_y': extent_y,
+            'extent_x': extent_x,
+            'layers': layer_names,
+        }
+        self._tiles.append(tile_info)
+
+        # Add annotation for the first tile
+        first_layer = self.viewer.layers[0]
+        scale = tuple(first_layer.scale[-3:])
+        has_time = len(first_layer.data.shape) >= 4
+        anno_name = self._add_annotation_to_viewer(
+            self.viewer, prev_label, (min_y, min_x), scale, has_time
+        )
+        self._annotation_layers.append(anno_name)
+
+    # ------------------------------------------------------------------
+    # Core layer-adding logic (shared by all modes)
+    # ------------------------------------------------------------------
+
+    def _get_scale_tuple(self, metadata: Dict, data) -> tuple:
+        """
+        Return the (z, y, x) scale tuple in µm.
+
+        Parameters
+        ----------
+        metadata : dict
+            Metadata dict from reader.
+        data : array-like
+            The image data (used to check shape).
+
+        Returns
+        -------
+        tuple
+            ``(z_step_µm, pixel_y_µm, pixel_x_µm)``
+        """
+        pixel_size_x = metadata['pixel_size']['x'] * 1e6
+        pixel_size_y = metadata['pixel_size']['y'] * 1e6
+        z_step = (
+            metadata['z_step'] * 1e6
+            if metadata['z_step'] is not None
+            else 1.0
+        )
+        return (z_step, pixel_size_y, pixel_size_x)
+
+    def _add_layers_to_viewer(
+        self,
+        target_viewer: napari.Viewer,
+        data,
+        metadata: Dict,
+        translate_yx: Tuple[float, float] = (0.0, 0.0),
+        name_prefix: str = "",
+    ) -> List[str]:
+        """
+        Add image channel layers to a viewer.
+
+        Parameters
+        ----------
+        target_viewer : napari.Viewer
+            Which viewer to add to.
+        data : array-like
+            5-D image data ``(T, C, Z, Y, X)``.
+        metadata : dict
+            Metadata dict from ``reader.read_data``.
+        translate_yx : tuple of float
+            ``(translate_y, translate_x)`` offset in physical (µm) units.
+        name_prefix : str
+            Optional prefix prepended to every layer name (useful for
+            distinguishing tiles).
+
+        Returns
+        -------
+        list of str
+            Names of the layers that were added.
+        """
         channels_info = metadata['channels']
         pixel_size_x = metadata['pixel_size']['x'] * 1e6
         pixel_size_y = metadata['pixel_size']['y'] * 1e6
@@ -1271,7 +1786,12 @@ class PhenixDataLoaderWidget(QWidget):
             'Cy5': 'magenta',
             'Cy3': 'yellow',
         }
-        default_colors = ['cyan', 'magenta', 'yellow', 'green', 'red', 'blue']
+        default_colors = [
+            'cyan', 'magenta', 'yellow', 'green', 'red', 'blue',
+        ]
+
+        ty, tx = translate_yx
+        added_names = []
 
         for ch_idx, (ch_id, ch_info) in enumerate(channels_info.items()):
             ch_name = ch_info['name']
@@ -1287,9 +1807,11 @@ class PhenixDataLoaderWidget(QWidget):
             if data.shape[0] > 1:
                 channel_data = data[:, ch_idx, :, :, :]
                 scale = (1, z_step, pixel_size_y, pixel_size_x)
+                translate = (0, 0, ty, tx)
             else:
                 channel_data = data[0, ch_idx, :, :, :]
                 scale = (z_step, pixel_size_y, pixel_size_x)
+                translate = (0, ty, tx)
 
             nonzero_data = channel_data[channel_data > 0]
             if len(nonzero_data) > 0:
@@ -1297,15 +1819,21 @@ class PhenixDataLoaderWidget(QWidget):
             else:
                 contrast_limits = [0, 1]
 
-            self.viewer.add_image(
+            layer_name = f"{name_prefix}Ch{ch_id}: {ch_name}"
+
+            target_viewer.add_image(
                 channel_data,
-                name=f"Ch{ch_id}: {ch_name}",
+                name=layer_name,
                 colormap=color,
                 blending='additive',
                 scale=scale,
-                contrast_limits=contrast_limits
+                translate=translate,
+                contrast_limits=contrast_limits,
             )
 
+            added_names.append(layer_name)
+
+        # Set viewer title
         well = metadata['well']
         if metadata['stitched']:
             title = f"{metadata['plate_id']} - {well} - Stitched"
@@ -1315,13 +1843,13 @@ class PhenixDataLoaderWidget(QWidget):
                 f"Field {metadata['fields'][0]}"
             )
 
-        # Append experimental metadata to title if available
         exp_meta = self.metadata_filter.get_metadata_for_well(well)
         if exp_meta:
-            # Pick a few key columns to show (compound, cell_line, condition, etc.)
             summary_keys = [
-                k for k in ['compound', 'cell_line', 'condition',
-                             'final_concentration']
+                k for k in [
+                    'compound', 'cell_line', 'condition',
+                    'final_concentration',
+                ]
                 if k in exp_meta
                    and k != self.metadata_filter._well_column
             ]
@@ -1329,9 +1857,11 @@ class PhenixDataLoaderWidget(QWidget):
                 summary_parts = [str(exp_meta[k]) for k in summary_keys]
                 title += " | " + " / ".join(summary_parts)
 
-        self.viewer.title = title
+        target_viewer.title = title
 
-        self.viewer.scale_bar.visible = True
-        self.viewer.scale_bar.unit = "µm"
+        target_viewer.scale_bar.visible = True
+        target_viewer.scale_bar.unit = "µm"
 
-        self.viewer.reset_view()
+        target_viewer.reset_view()
+
+        return added_names
