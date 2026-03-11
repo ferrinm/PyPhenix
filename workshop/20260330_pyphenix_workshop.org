@@ -1,0 +1,41 @@
+#+title: PyPhenix workshop
+#+subtitle: a workshop for getting started with PyPhenix
+#+author: Max Ferrin
+#+email: ferrin@calicolabs.com
+#+last_modified: <2026-03-10 Tue 15:11>
+#+OPTIONS: toc:t num:nil author:t date:t title:t ^:nil broken-links:mark
+* Aims
+** General
+- visualize data with PyPhenix
+- explore how PyPhenix can serve as a starting point for downstream processing
+  and analysis
+- share feedback to improve or extend PyPhenix
+** Data preparation
+- How to export from Opera Phenix
+** Graphical session
+- install PyPhenix widget and all dependencies on your computer
+- learn the basic functions of the PyPhenix widget:
+  - load a dataset
+  - select dimensions for visualization
+  - show physical pixel size and real time stamp
+  - 2D and 3D view
+  - thick/thin slicing
+  - adjust colormaps and contrast limits
+  - simple napari console commands
+** Scripting session
+- install dependencies necessary to run jupyter notebooks
+- learn the basic functions of the PyPhenix scripting functions:
+  - launch viewer from interactive notebook
+  - print out metadata
+  - load a specific subset of data
+  - loop through multiple wells
+  - carry data forward for python-based processing with numpy arrays 
+* Brainstorming
+** unorganized
+- shout out pyphenix google chat group
+** downstream tools
+- explore [[https://napari-hub.org/][napari hub]] together
+  - keep track of compatibility: plugin engine was recently overhauled
+- make movies using [[https://napari.org/napari-animation/][napari-animation]]
+- some kind of graphical segmentation helper?
+* 
