@@ -1,15 +1,18 @@
-* pyphenix
-:PROPERTIES:
-:CUSTOM_ID: pyphenix
-:END:
-[[https://github.com/ferrinm/pyphenix/raw/main/LICENSE][[[https://img.shields.io/pypi/l/pyphenix.svg?color=green]​]​]]
+#+title: pyphenix
+#+subtitle: automatically read in data from Opera Phenix and interactively visualize via napari widgets
+#+author: Max Ferrin
+#+email: ferrin@calicolabs.com
+#+last_modified: <2026-03-10 Tue 19:30>
+#+OPTIONS: toc:t num:nil author:t date:t title:t ^:nil broken-links:mark
+
+[[https://github.com/ferrinm/pyphenix/raw/main/LICENSE][https://img.shields.io/pypi/l/pyphenix.svg?color=green]]
 [[https://pypi.org/project/pyphenix][https://img.shields.io/pypi/v/pyphenix.svg?color=green]]
-[[https://python.org][[[https://img.shields.io/pypi/pyversions/pyphenix.svg?color=green]]]]
-[[https://github.com/ferrinm/pyphenix/actions][[[https://github.com/ferrinm/pyphenix/workflows/tests/badge.svg]]]]
-[[https://codecov.io/gh/ferrinm/pyphenix][[[https://codecov.io/gh/ferrinm/pyphenix/branch/main/graph/badge.svg]]]]
-[[https://napari-hub.org/plugins/pyphenix][[[https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/pyphenix]]]]
-[[https://napari.org/stable/plugins/index.html][[[https://img.shields.io/badge/plugin-npe2-blue?link=https://napari.org/stable/plugins/index.html]]]]
-[[https://github.com/copier-org/copier][[[https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-purple.json]]]]
+[[https://python.org][https://img.shields.io/pypi/pyversions/pyphenix.svg?color=green]]
+[[https://github.com/ferrinm/pyphenix/actions][https://github.com/ferrinm/pyphenix/workflows/tests/badge.svg]]
+[[https://codecov.io/gh/ferrinm/pyphenix][https://codecov.io/gh/ferrinm/pyphenix/branch/main/graph/badge.svg]]
+[[https://napari-hub.org/plugins/pyphenix][https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/pyphenix]]
+[[https://napari.org/stable/plugins/index.html][https://img.shields.io/badge/plugin-npe2-blue?link=https://napari.org/stable/plugins/index.html]]
+[[https://github.com/copier-org/copier][https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-purple.json]]
 
 A data loader and widget to visualize high-dimensional data collected on
 the Opera Phenix
@@ -30,7 +33,7 @@ with [[https://copier.readthedocs.io/en/stable/][copier]] using the
   -->
 #+end_html
 
-** Installation
+* Installation
 :PROPERTIES:
 :CUSTOM_ID: installation
 :END:
@@ -53,7 +56,7 @@ To install latest development version :
 pip install git+https://github.com/ferrinm/pyphenix.git
 #+end_example
 
-** Contributing
+* Contributing
 :PROPERTIES:
 :CUSTOM_ID: contributing
 :END:
@@ -61,14 +64,14 @@ Contributions are very welcome. Tests can be run with
 [[https://tox.readthedocs.io/en/latest/][tox]], please ensure the
 coverage at least stays the same before you submit a pull request.
 
-** License
+* License
 :PROPERTIES:
 :CUSTOM_ID: license
 :END:
 Distributed under the terms of the [GNU GPL v3.0] license, “pyphenix” is
 free and open source software
 
-** Issues
+* Issues
 :PROPERTIES:
 :CUSTOM_ID: issues
 :END:
