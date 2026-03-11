@@ -5,7 +5,7 @@
 #+subtitle: automatically read in data from Opera Phenix and interactively visualize via napari widgets
 #+author: Max Ferrin
 #+email: ferrin@calicolabs.com
-#+last_modified: <2026-02-19 Thu 11:11>
+#+last_modified: <2026-03-10 Tue 18:39>
 #+OPTIONS: toc:t num:nil author:t date:t title:t ^:nil broken-links:mark
 
 * Description
@@ -538,8 +538,9 @@ viewer2 = create_phenix_data_loader('/path/to/experiment2')
 
 ** Source code (OUTDATED)
 :PROPERTIES:
-:header-args:python: :tangle s1_pyphenix_functions.py :kernel s1_pyphenix :session s1_pyphenix
+:header-args:python: :tangle no :kernel s1_pyphenix :session s1_pyphenix
 :END:
+# :header-args:python: :tangle s1_pyphenix_functions.py :kernel s1_pyphenix :session s1_pyphenix
 - <2026-01-02 Fri> I stopped updating the code here, instead writing to the
   files in [[file:src/pyphenix/]] that napari hub is expecting
 *** load a single well from archive
