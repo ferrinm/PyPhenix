@@ -2,8 +2,10 @@
 #+subtitle: a workshop for getting started with PyPhenix
 #+author: Max Ferrin
 #+email: ferrin@calicolabs.com
-#+last_modified: <2026-03-10 Tue 15:11>
+#+last_modified: <2026-03-11 Wed 17:56>
 #+OPTIONS: toc:t num:nil author:t date:t title:t ^:nil broken-links:mark
+* Intended audience 
+- Opera Phenix Users
 * Aims
 ** General
 - visualize data with PyPhenix
@@ -29,7 +31,7 @@
   - print out metadata
   - load a specific subset of data
   - loop through multiple wells
-  - carry data forward for python-based processing with numpy arrays 
+  - carry data forward for python-based processing with numpy arrays
 * Brainstorming
 ** unorganized
 - shout out pyphenix google chat group

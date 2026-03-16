@@ -25,7 +25,21 @@ https://napari.org/stable/plugins/index.html
 
 ## Installation
 
-### Reader only (no GUI, no napari required)
+### Using `napari`'s graphical plugin manager
+Users can entirely avoid using a command prompt by using the package manager
+built in to the bundled napari app.
+
+Follow the [installation
+instructions](https://napari.org/stable/tutorials/fundamentals/installation_bundle_conda.html)
+to download and install the correct version of the bundled napari app for your
+operating systems (MacOS, Windows, or Linux).
+
+Then following the [instructions for installing
+plugins](https://napari.org/stable/plugins/start_using_plugins/finding_and_installing_plugins.html#installing-plugins-with-napari),
+search for `PyPhenix` in the Plugin Manager search bar and click "Install".
+
+### Using Python package installer (`pip`)
+#### Reader only (no GUI, no napari required)
 
 If you only need the `OperaPhenixReader` — for example on a server or in a
 headless analysis pipeline — install the base package:
@@ -44,7 +58,7 @@ reader = OperaPhenixReader("/path/to/experiment")
 data, metadata = reader.read_data(row="D", column=4)
 ```
 
-### Full GUI install (napari widget)
+#### Full GUI install (napari widget)
 
 To use the interactive napari widget, install with the `napari` extra:
 
@@ -68,14 +82,14 @@ the widget available automatically:
 pip install pyphenix
 ```
 
-### Latest development version
+#### Latest development version
 
 ```
 pip install git+https://github.com/ferrinm/pyphenix.git
 ```
 
 
-## Contributing
+### Contributing
 
 Contributions are very welcome. Tests can be run with [tox], please ensure
 the coverage at least stays the same before you submit a pull request.
