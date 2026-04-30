@@ -74,14 +74,17 @@ class CollapsibleSection(QWidget):
         # Header frame with background
         header_frame = QFrame()
         header_frame.setFrameShape(QFrame.StyledPanel)
+        # Use semi-transparent gray so the header reads in both light and
+        # dark themes — palette(midlight) was near-white in light mode,
+        # making white-on-white text from napari's dark stylesheet unreadable.
         header_frame.setStyleSheet("""
             QFrame {
-                background-color: palette(midlight);
-                border: 1px solid palette(mid);
+                background-color: rgba(128, 128, 128, 60);
+                border: 1px solid rgba(128, 128, 128, 100);
                 border-radius: 3px;
             }
             QFrame:hover {
-                background-color: palette(light);
+                background-color: rgba(128, 128, 128, 100);
             }
         """)
 
@@ -545,9 +548,10 @@ class PhenixDataLoaderWidget(QWidget):
 
         self.well_meta_label = QLabel("")
         self.well_meta_label.setWordWrap(True)
-        self.well_meta_label.setStyleSheet(
-            "QLabel { color: palette(text); font-size: 11px; }"
-        )
+        # Don't pin the color — palette(text) returned a value that clashed
+        # with the surrounding widget background in napari light mode.
+        # Letting napari's stylesheet drive QLabel color works in both themes.
+        self.well_meta_label.setStyleSheet("QLabel { font-size: 11px; }")
         well_layout.addWidget(self.well_meta_label)
 
         well_group.setContentLayout(well_layout)

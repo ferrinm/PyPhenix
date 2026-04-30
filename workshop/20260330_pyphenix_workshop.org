@@ -2,7 +2,7 @@
 #+subtitle: a workshop for getting started with PyPhenix
 #+author: Max Ferrin
 #+email: ferrin@calicolabs.com
-#+last_modified: <2026-03-11 Wed 17:56>
+#+last_modified: <2026-03-30 Mon 09:28>
 #+OPTIONS: toc:t num:nil author:t date:t title:t ^:nil broken-links:mark
 * Intended audience 
 - Opera Phenix Users
@@ -35,9 +35,86 @@
 * Brainstorming
 ** unorganized
 - shout out pyphenix google chat group
+** initial survey 
+- collect attendee names so I can report back on usage
+- have you collected data on opera phenix before?
+  - yes
+  - no
+- have you had difficulty exploring data from the phenix?
+  - yes
+  - no
+  - not applicable
+- do you have experience with imagej/fiji?
+  - yes
+  - no
+- do you have experience with napari?
+  - yes
+  - no
+- do you have experience with python?
+  - yes
+  - no
+** workshop feedback survey 
+- which part(s) did you attend
+  - grab sections from agenda
+  - none is an option
+- feedback for the workshop itself
+- feedback for pyphenix
+  - anything that was confusing?
+  - suggested additional features?
+- are there other tools you would like image analysis team to host workshops for?
+- are there other tools that don't exist which you would like us to build?
+** napari crash course
+- bundled app installation
+- [[https://github.com/napari/napari/releases/tag/v0.5.6][version 0.5.6]]
+** full list of pyphenix functionalities to document and go over
+*** installation
+- follow the [[https://github.com/ferrinm/PyPhenix/blob/main/README.md#installation][README]] installation instructions
+*** data requirements
+- path to data export or archive
+  - review and link to my [[https://docs.google.com/document/d/13sFa3PiZSyXRBrtQbZ0X2DLLmummkoJVmeN-4zXEDvo/edit?tab=t.0][guide]]
+- optional: path to experimental metadata table
+  - needs to be csv
+  - only requires index column(s): well, and/or row+column
+  - all non-index columns will be available for display and filtering
+*** graphical
+- 
+*** scripting
+**** local
+**** cluster: "headless" version
 ** downstream tools
 - explore [[https://napari-hub.org/][napari hub]] together
   - keep track of compatibility: plugin engine was recently overhauled
 - make movies using [[https://napari.org/napari-animation/][napari-animation]]
+- stardist-napari
+  - only works on 2D data, or their own sample 3D data
+- cellpose-napari
+  - doesn't work at all
+- allen segmenter (+ ML)
+  - doesn't install
+- napari-assistant
+  - doesn't install
+- napari-ndev
+  - even after creating a fresh environment and following the [[https://ndev-kit.github.io/installation/][installation
+    instructions]], it fails to launch
+- devbio-napari
+  - ok it does work, but only with this very specific combination of versions:
+    #+begin_src bash
+uv init --python 3.11
+uv add napari[all]==0.5.6 devbio-napari pyphenix
+    #+end_src
 - some kind of graphical segmentation helper?
+- [[https://napari-hub.org/plugins/segment-any-confocal-images.html][segment-any-confocal-images]]
+    #+begin_src bash
+uv init --python 3.11
+uv add scikit-image==0.22 "segment-any-confocal-images[all]" pyphenix torch
+    #+end_src
+  - some incompatibility with scikit image; this just doesn't work
+*** compatible with graphical installer and napari 0.7.0
+- [[https://napari-hub.org/plugins/napari-segment-blobs-and-things-with-membranes][segment blobs and things with membranes]]
+  - this is the only other useful plugin that really works with newer napari
+    versions from the graphical plugin browser (making sure it's the pypi version!)
+- napari-skimage
+- napari-skimage-regionprops
+- napari-animation
+* Outline
 * 
