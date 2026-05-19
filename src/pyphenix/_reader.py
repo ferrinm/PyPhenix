@@ -10,6 +10,8 @@ from dataclasses import dataclass
 import json
 import warnings
 
+from ._colormaps import channel_color
+
 
 @dataclass
 class PhenixMetadata:
@@ -1899,31 +1901,10 @@ def phenix_reader(path):
     pixel_size_y = metadata['pixel_size']['y'] * 1e6
     z_step = metadata['z_step'] * 1e6 if metadata['z_step'] is not None else 1.0
     
-    # Color mapping
-    color_map = {
-        'DAPI': 'blue',
-        'Hoechst': 'blue',
-        'Alexa 488': 'green',
-        'GFP': 'green',
-        'Alexa 555': 'yellow',
-        'mCherry': 'red',
-        'Alexa 647': 'magenta',
-        'Cy5': 'magenta',
-    }
-    default_colors = ['cyan', 'magenta', 'yellow', 'green', 'red', 'blue']
-    
     # Add each channel as a layer
     for ch_idx, (ch_id, ch_info) in enumerate(channels_info.items()):
         ch_name = ch_info['name']
-        
-        # Select color
-        color = None
-        for key, value in color_map.items():
-            if key.lower() in ch_name.lower():
-                color = value
-                break
-        if color is None:
-            color = default_colors[ch_idx % len(default_colors)]
+        color = channel_color(ch_name, ch_idx)
         
         # Get channel data
         if data.shape[0] > 1:  # Multiple timepoints

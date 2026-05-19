@@ -12,6 +12,7 @@ from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from qtpy.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 
 from ._reader import OperaPhenixReader
+from ._colormaps import channel_color
 
 def _normalise_well_str(well: str) -> str:
     """
@@ -1834,38 +1835,12 @@ class PhenixDataLoaderWidget(QWidget):
             else 1.0
         )
 
-        color_map = {
-            'Brightfield': 'gray',
-            'DAPI': 'cyan',
-            'Hoechst': 'cyan',
-            'Alexa 488': 'green',
-            'GFP': 'green',
-            'EGFP': 'green',
-            'Alexa 555': 'yellow',
-            'Alexa 568': 'yellow',
-            'mCherry': 'magenta',
-            'mStrawberry': 'magenta',
-            'Alexa 647': 'magenta',
-            'Cy5': 'magenta',
-            'Cy3': 'yellow',
-        }
-        default_colors = [
-            'cyan', 'magenta', 'yellow', 'green', 'red', 'blue',
-        ]
-
         ty, tx = translate_yx
         added_names = []
 
         for ch_idx, (ch_id, ch_info) in enumerate(channels_info.items()):
             ch_name = ch_info['name']
-
-            color = None
-            for key, value in color_map.items():
-                if key.lower() in ch_name.lower():
-                    color = value
-                    break
-            if color is None:
-                color = default_colors[ch_idx % len(default_colors)]
+            color = channel_color(ch_name, ch_idx)
 
             if data.shape[0] > 1:
                 channel_data = data[:, ch_idx, :, :, :]
