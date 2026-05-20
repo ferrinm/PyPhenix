@@ -31,6 +31,8 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy",
     "Pillow",
+    "matplotlib",
+    "tqdm",
 ]
 
 [project.optional-dependencies]
