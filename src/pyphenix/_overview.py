@@ -140,10 +140,10 @@ def _render_cell(
 
 
 def _nice_scalebar_length_um(visible_um: float) -> float:
-    """Pick a 1/2/5×10^k value covering ~15-25 % of ``visible_um``."""
+    """Pick a 1/2/5×10^k value covering ~25-50 % of ``visible_um``."""
     if visible_um <= 0:
         return 1.0
-    target = visible_um * 0.2
+    target = visible_um * 0.4
     exp = np.floor(np.log10(target))
     base = target / (10**exp)
     if base < 1.5:
@@ -239,7 +239,9 @@ def _render_combo_png(
     timepoint_label: str,
     z_label: str,
     ffc_label: str,
+    stitch_fields: bool,
     um_per_thumb_pixel: float,
+    scalebar_um: Optional[float],
     outpath: Path,
 ) -> None:
     """Render and save one PNG for one channel combo."""
@@ -268,20 +270,32 @@ def _render_combo_png(
 
     # Figure layout in inches → fig fractions. The plate-image axis is
     # sized so its pixel dimensions at the chosen dpi match the canvas,
-    # i.e. well_px actually controls the output PNG resolution.
+    # i.e. well_px actually controls the output PNG resolution. All
+    # layout and font sizes scale uniformly with the canvas so a large
+    # plate produces a proportionally bigger image (not a small-text one).
+    # Baseline = 7" canvas → scale 1, matching prior 8"-figure look.
     n_combo = len(combo)
     dpi = 150
-    margin_left = 0.7
-    margin_right = 0.25
-    margin_top = 0.95
-    margin_bottom = 0.5
-    colorbar_w = 0.45
-    scalebar_h = 0.35
-    hgap = 0.2
-    vgap = 0.2
-
     axis_w_in = (plate_cols * cell_w) / dpi
     axis_h_in = (plate_rows * cell_h) / dpi
+    scale = max(1.0, axis_w_in / 7.0)
+
+    margin_left = 0.7 * scale
+    # margin_right has to fit the colorbar tick labels and rotated channel
+    # label that hang off the right side of each cb axis.
+    margin_right = 0.7 * scale
+    margin_top = 0.95 * scale
+    margin_bottom = 0.5 * scale
+    colorbar_w = 0.18 * scale
+    scalebar_h = 0.55 * scale
+    hgap = 0.2 * scale
+    vgap = 0.2 * scale
+    title_fs = 11 * scale
+    subtitle_fs = 9 * scale
+    tick_fs = 7 * scale
+    cb_tick_fs = 6 * scale
+    cb_label_fs = 7 * scale
+    scalebar_fs = 7 * scale
     fig_w = max(8.0, margin_left + axis_w_in + hgap + colorbar_w + margin_right)
     fig_h = max(
         6.0, margin_top + axis_h_in + vgap + scalebar_h + margin_bottom
@@ -308,7 +322,9 @@ def _render_combo_png(
     # Column ticks on top: 1..plate_cols at cell centers.
     col_positions = [(c - 0.5) * cell_w for c in range(1, plate_cols + 1)]
     ax.set_xticks(col_positions)
-    ax.set_xticklabels([str(c) for c in range(1, plate_cols + 1)], fontsize=7)
+    ax.set_xticklabels(
+        [str(c) for c in range(1, plate_cols + 1)], fontsize=tick_fs
+    )
     ax.xaxis.set_ticks_position("top")
     ax.xaxis.set_label_position("top")
 
@@ -316,7 +332,7 @@ def _render_combo_png(
     row_positions = [(r - 0.5) * cell_h for r in range(1, plate_rows + 1)]
     ax.set_yticks(row_positions)
     ax.set_yticklabels(
-        [_row_letter(r) for r in range(1, plate_rows + 1)], fontsize=7
+        [_row_letter(r) for r in range(1, plate_rows + 1)], fontsize=tick_fs
     )
     ax.tick_params(axis="both", length=0)
 
@@ -344,18 +360,18 @@ def _render_combo_png(
     )
     subtitle = f"{title_combo}  ·  {options_line}"
     fig.text(
-        0.5, 1 - 0.3 / fig_h, plate_id,
-        ha="center", fontsize=11, fontweight="bold",
+        0.5, 1 - (0.3 * scale) / fig_h, plate_id,
+        ha="center", fontsize=title_fs, fontweight="bold",
     )
     fig.text(
-        0.5, 1 - 0.62 / fig_h, subtitle,
-        ha="center", fontsize=9, color="gray",
+        0.5, 1 - (0.62 * scale) / fig_h, subtitle,
+        ha="center", fontsize=subtitle_fs, color="gray",
     )
 
     # Colorbar column on the right: one per channel in combo, top → bottom.
     cb_x = (margin_left + real_axis_w + hgap) / fig_w
     cb_w_frac = colorbar_w / fig_w
-    cb_gap_in = 0.35
+    cb_gap_in = 0.35 * scale
     sub_h_in = (real_axis_h - (n_combo - 1) * cb_gap_in) / n_combo
     ax_top_in = margin_bottom + scalebar_h + vgap + real_axis_h
     for i, ch_id in enumerate(combo):
@@ -373,9 +389,9 @@ def _render_combo_png(
         cb = matplotlib.colorbar.ColorbarBase(
             cax, cmap=cmap, norm=norm, orientation="vertical"
         )
-        cb.ax.tick_params(labelsize=6)
+        cb.ax.tick_params(labelsize=cb_tick_fs)
         cb.set_label(
-            f"Ch{ch_id}: {channel_names.get(ch_id, '?')}", fontsize=7
+            f"Ch{ch_id}: {channel_names.get(ch_id, '?')}", fontsize=cb_label_fs
         )
 
     # Scale bar below the plate (in µm). Length: nice 1/2/5×10^k value
@@ -383,22 +399,39 @@ def _render_combo_png(
     sb_ax = fig.add_axes(
         [ax_left, margin_bottom / fig_h, ax_w_frac, scalebar_h / fig_h]
     )
-    sb_ax.set_xlim(0, cell_w)
+    # xlim spans the full plate width so 1 thumb pixel here = 1 thumb pixel
+    # on the plate axis above; the drawn bar length is then proportionally
+    # correct against the cells.
+    sb_ax.set_xlim(0, plate_cols * cell_w)
     sb_ax.set_ylim(0, 1)
     sb_ax.axis("off")
-    well_visible_um = cell_w * um_per_thumb_pixel
-    bar_um = _nice_scalebar_length_um(well_visible_um)
+    # Each grid cell shows one field (single-field mode) or one fully
+    # stitched field-of-view (stitched mode), never the whole well.
+    cell_visible_um = cell_w * um_per_thumb_pixel
+    bar_um = (
+        scalebar_um
+        if scalebar_um is not None
+        else _nice_scalebar_length_um(cell_visible_um)
+    )
     bar_thumb_px = bar_um / um_per_thumb_pixel if um_per_thumb_pixel > 0 else 0
     sb_ax.add_patch(
-        plt.Rectangle((0, 0.55), bar_thumb_px, 0.15, color="black")
+        plt.Rectangle((0, 0.78), bar_thumb_px, 0.12, color="black")
+    )
+    cell_descriptor = (
+        "one fully stitched field" if stitch_fields else "one field"
+    )
+    # Bar length centered under the bar; spatial reference below it, also
+    # centered under the bar (will overflow when bar is much shorter than
+    # the descriptor text — acceptable since the scalebar axis spans the
+    # whole plate width).
+    sb_ax.text(
+        bar_thumb_px / 2, 0.55, f"{bar_um:g} µm",
+        ha="center", va="center", fontsize=scalebar_fs,
     )
     sb_ax.text(
-        bar_thumb_px / 2,
-        0.35,
-        f"{bar_um:g} µm  ·  one well ≈ {well_visible_um:.0f} µm",
-        ha="center",
-        va="top",
-        fontsize=7,
+        bar_thumb_px / 2, 0.20,
+        f"{cell_descriptor} ≈ {cell_visible_um:.0f} µm",
+        ha="center", va="center", fontsize=scalebar_fs, color="gray",
     )
 
     fig.savefig(outpath, dpi=dpi, facecolor="white")
@@ -416,6 +449,7 @@ def generate_plate_overview(
     well_px: int = 300,
     contrast_limits: Optional[Dict[int, Tuple[float, float]]] = None,
     apply_ffc: bool = True,
+    scalebar_um: Optional[float] = None,
     verbose: bool = True,
 ) -> List[Path]:
     """Generate plate overview PNGs and a JSON sidecar.
@@ -452,6 +486,9 @@ def generate_plate_overview(
         sidecar — but the override is applied for rendering.
     apply_ffc : bool, default True
         Apply flat-field correction if profiles are present.
+    scalebar_um : float, optional
+        Scale-bar length in µm. ``None`` (default) picks a nice 1/2/5×10^k
+        value covering ~25-50 % of one displayed field. Must be positive.
     verbose : bool, default True
         Print progress and show a ``tqdm`` progress bar.
 
@@ -463,6 +500,9 @@ def generate_plate_overview(
     experiment_path = Path(experiment_path)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if scalebar_um is not None and scalebar_um <= 0:
+        raise ValueError(f"scalebar_um must be positive, got {scalebar_um}")
 
     reader = OperaPhenixReader(str(experiment_path), verbose=verbose)
     meta = reader.metadata
@@ -639,7 +679,9 @@ def generate_plate_overview(
             timepoint_label=timepoint_label,
             z_label=z_label,
             ffc_label=ffc_label,
+            stitch_fields=stitch_fields,
             um_per_thumb_pixel=um_per_thumb_pixel,
+            scalebar_um=scalebar_um,
             outpath=outpath,
         )
         written.append(outpath)
@@ -656,6 +698,7 @@ def generate_plate_overview(
             "z_slices": z_slices,
             "well_px": well_px,
             "apply_ffc": apply_ffc,
+            "scalebar_um": scalebar_um,
             "contrast_limits_override": (
                 {str(k): list(v) for k, v in contrast_limits.items()}
                 if contrast_limits
