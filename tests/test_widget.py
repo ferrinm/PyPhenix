@@ -358,12 +358,26 @@ def test_plate_overview_warns_without_experiment(widget_with_viewer):
 def test_plate_overview_button_wiring(widget_with_viewer, tmp_path,
                                       monkeypatch):
     """Mock QFileDialog and the OS-open call, verify wiring to
-    generate_plate_overview()."""
+    generate_plate_overview() including the overview-section params."""
     widget, _ = widget_with_viewer
 
-    # Pretend an experiment is loaded.
+    # Pretend an experiment is loaded with a minimal metadata mock.
     widget.reader = Mock()
+    mock_meta = Mock()
+    mock_meta.channel_ids = [1]
+    mock_meta.channels = {1: {"name": "DAPI"}}
+    mock_meta.timepoints = [1]
+    mock_meta.planes = [0]
+    mock_meta.fields = [1]
+    widget.metadata = mock_meta
     widget.path_input.setText("/some/experiment")
+
+    # Populate the overview controls as _populate_selectors would have.
+    widget.ov_channel_list.addItem("Ch1: DAPI")
+    widget._select_all(widget.ov_channel_list)
+    widget.ov_timepoint_combo.addItem("Timepoint 1")
+    widget.ov_z_list.addItem("Z-plane 0")
+    widget._select_all(widget.ov_z_list)
 
     chosen_dir = str(tmp_path)
     dialog_mock = Mock(return_value=chosen_dir)
@@ -379,8 +393,18 @@ def test_plate_overview_button_wiring(widget_with_viewer, tmp_path,
         args, _kwargs = dialog_mock.call_args
         assert "/some/experiment" in args
 
-        # generate_plate_overview called with (experiment_path, output_dir).
-        mock_gen.assert_called_once_with("/some/experiment", chosen_dir)
+        # generate_plate_overview called with the experiment path,
+        # output dir, and the overview-section parameters.
+        mock_gen.assert_called_once()
+        call_args, call_kwargs = mock_gen.call_args
+        assert call_args == ("/some/experiment", chosen_dir)
+        assert call_kwargs["field"] is None
+        assert call_kwargs["channels"] == [1]
+        assert call_kwargs["timepoint"] == 1
+        assert call_kwargs["z_slices"] is None
+        assert call_kwargs["well_px"] == 300
+        assert call_kwargs["scalebar_um"] is None
+        assert call_kwargs["apply_ffc"] is True
 
         # OS file viewer was invoked with the chosen directory.
         mock_run.assert_called_once()

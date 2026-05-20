@@ -10,7 +10,8 @@ from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                             QComboBox, QListWidget, QLabel, QCheckBox,
                             QFrame, QToolButton, QSizePolicy,
                             QGroupBox, QAbstractItemView, QLineEdit, QFileDialog,
-                            QScrollArea, QRadioButton, QButtonGroup)
+                            QScrollArea, QRadioButton, QButtonGroup,
+                            QSpinBox, QDoubleSpinBox)
 from qtpy.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 
 from ._reader import OperaPhenixReader
@@ -790,8 +791,105 @@ class PhenixDataLoaderWidget(QWidget):
         layout.addWidget(save_group)
 
         # ── Plate overview ────────────────────────────────────────────
-        overview_group = CollapsibleSection("Plate Overview")
+        # Parameters mirror generate_plate_overview() so the overview can
+        # be generated independently of the main visualization selection.
+        # Defaults match the function's defaults at first show; populated
+        # once an experiment loads.
+        overview_group = CollapsibleSection("Save Plate Overview Figure")
         overview_layout = QVBoxLayout()
+
+        # Field selection.
+        self.ov_stitch_checkbox = QCheckBox("Stitch all fields")
+        self.ov_stitch_checkbox.stateChanged.connect(
+            self._on_ov_stitch_changed
+        )
+        overview_layout.addWidget(self.ov_stitch_checkbox)
+
+        overview_layout.addWidget(QLabel("Field:"))
+        self.ov_field_combo = QComboBox()
+        # Index 0 = "First field per well" (field=None); subsequent items
+        # populate from metadata.fields once an experiment loads.
+        self.ov_field_combo.addItem("First field per well")
+        overview_layout.addWidget(self.ov_field_combo)
+
+        # Channels.
+        ov_channel_buttons = QHBoxLayout()
+        self.ov_channel_select_all_btn = QPushButton("Select All")
+        self.ov_channel_select_all_btn.clicked.connect(
+            lambda: self._select_all(self.ov_channel_list)
+        )
+        self.ov_channel_clear_all_btn = QPushButton("Clear All")
+        self.ov_channel_clear_all_btn.clicked.connect(
+            lambda: self._clear_all(self.ov_channel_list)
+        )
+        ov_channel_buttons.addWidget(self.ov_channel_select_all_btn)
+        ov_channel_buttons.addWidget(self.ov_channel_clear_all_btn)
+        overview_layout.addWidget(QLabel("Channels:"))
+        overview_layout.addLayout(ov_channel_buttons)
+        self.ov_channel_list = QListWidget()
+        self.ov_channel_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.ov_channel_list.setMaximumHeight(100)
+        overview_layout.addWidget(self.ov_channel_list)
+
+        # Timepoint (single value, unlike main viz which takes a list).
+        overview_layout.addWidget(QLabel("Timepoint:"))
+        self.ov_timepoint_combo = QComboBox()
+        overview_layout.addWidget(self.ov_timepoint_combo)
+
+        # Z-slices (list).
+        ov_z_buttons = QHBoxLayout()
+        self.ov_z_select_all_btn = QPushButton("Select All")
+        self.ov_z_select_all_btn.clicked.connect(
+            lambda: self._select_all(self.ov_z_list)
+        )
+        self.ov_z_clear_all_btn = QPushButton("Clear All")
+        self.ov_z_clear_all_btn.clicked.connect(
+            lambda: self._clear_all(self.ov_z_list)
+        )
+        ov_z_buttons.addWidget(self.ov_z_select_all_btn)
+        ov_z_buttons.addWidget(self.ov_z_clear_all_btn)
+        overview_layout.addWidget(QLabel("Z-slices:"))
+        overview_layout.addLayout(ov_z_buttons)
+        self.ov_z_list = QListWidget()
+        self.ov_z_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.ov_z_list.setMaximumHeight(100)
+        overview_layout.addWidget(self.ov_z_list)
+
+        # Well render size.
+        well_px_layout = QHBoxLayout()
+        well_px_layout.addWidget(QLabel("Well render size (px):"))
+        self.ov_well_px_spin = QSpinBox()
+        self.ov_well_px_spin.setRange(50, 4000)
+        self.ov_well_px_spin.setValue(300)
+        self.ov_well_px_spin.setSingleStep(50)
+        well_px_layout.addWidget(self.ov_well_px_spin)
+        well_px_layout.addStretch()
+        overview_layout.addLayout(well_px_layout)
+
+        # Scale-bar length.
+        self.ov_scalebar_auto_checkbox = QCheckBox("Auto scale-bar length")
+        self.ov_scalebar_auto_checkbox.setChecked(True)
+        self.ov_scalebar_auto_checkbox.stateChanged.connect(
+            self._on_ov_scalebar_auto_changed
+        )
+        overview_layout.addWidget(self.ov_scalebar_auto_checkbox)
+        scalebar_layout = QHBoxLayout()
+        scalebar_layout.addWidget(QLabel("Custom scale-bar length (µm):"))
+        self.ov_scalebar_um_spin = QDoubleSpinBox()
+        self.ov_scalebar_um_spin.setRange(0.1, 100000.0)
+        self.ov_scalebar_um_spin.setValue(100.0)
+        self.ov_scalebar_um_spin.setDecimals(1)
+        self.ov_scalebar_um_spin.setSingleStep(10.0)
+        self.ov_scalebar_um_spin.setEnabled(False)
+        scalebar_layout.addWidget(self.ov_scalebar_um_spin)
+        scalebar_layout.addStretch()
+        overview_layout.addLayout(scalebar_layout)
+
+        # Flat field correction (separate from the main viz checkbox so
+        # users can choose whether to apply FFC just for the overview).
+        self.ov_ffc_checkbox = QCheckBox("Apply flat field correction")
+        self.ov_ffc_checkbox.setChecked(True)
+        overview_layout.addWidget(self.ov_ffc_checkbox)
 
         self.plate_overview_btn = QPushButton("Generate plate overview")
         self.plate_overview_btn.setToolTip(
@@ -1085,6 +1183,34 @@ class PhenixDataLoaderWidget(QWidget):
         )
         self._select_all(self.z_list)
 
+        # Mirror selectors for the plate-overview section. Each widget is
+        # populated to defaults that match generate_plate_overview()'s
+        # defaults: all channels, first timepoint, all Z, first field.
+        self.ov_field_combo.clear()
+        self.ov_field_combo.addItem("First field per well")
+        self.ov_field_combo.addItems(
+            [f"Field {f}" for f in self.metadata.fields]
+        )
+        self.ov_field_combo.setCurrentIndex(0)
+
+        self.ov_channel_list.clear()
+        for ch_id in self.metadata.channel_ids:
+            ch_name = self.metadata.channels[ch_id]['name']
+            self.ov_channel_list.addItem(f"Ch{ch_id}: {ch_name}")
+        self._select_all(self.ov_channel_list)
+
+        self.ov_timepoint_combo.clear()
+        self.ov_timepoint_combo.addItems(
+            [f"Timepoint {t}" for t in self.metadata.timepoints]
+        )
+        self.ov_timepoint_combo.setCurrentIndex(0)
+
+        self.ov_z_list.clear()
+        self.ov_z_list.addItems(
+            [f"Z-plane {z}" for z in self.metadata.planes]
+        )
+        self._select_all(self.ov_z_list)
+
     def _set_controls_enabled(self, enabled: bool):
         """Enable or disable all control widgets."""
         self.well_combo.setEnabled(enabled)
@@ -1101,10 +1227,29 @@ class PhenixDataLoaderWidget(QWidget):
         self.z_clear_all_btn.setEnabled(enabled)
         self.plate_overview_btn.setEnabled(enabled)
 
-        if enabled and self.reader and self.reader.ffc_profiles:
-            self.ffc_checkbox.setEnabled(True)
-        else:
-            self.ffc_checkbox.setEnabled(False)
+        # Plate-overview controls.
+        self.ov_stitch_checkbox.setEnabled(enabled)
+        self.ov_field_combo.setEnabled(
+            enabled and not self.ov_stitch_checkbox.isChecked()
+        )
+        self.ov_channel_list.setEnabled(enabled)
+        self.ov_channel_select_all_btn.setEnabled(enabled)
+        self.ov_channel_clear_all_btn.setEnabled(enabled)
+        self.ov_timepoint_combo.setEnabled(enabled)
+        self.ov_z_list.setEnabled(enabled)
+        self.ov_z_select_all_btn.setEnabled(enabled)
+        self.ov_z_clear_all_btn.setEnabled(enabled)
+        self.ov_well_px_spin.setEnabled(enabled)
+        self.ov_scalebar_auto_checkbox.setEnabled(enabled)
+        self.ov_scalebar_um_spin.setEnabled(
+            enabled and not self.ov_scalebar_auto_checkbox.isChecked()
+        )
+
+        ffc_available = bool(
+            enabled and self.reader and self.reader.ffc_profiles
+        )
+        self.ffc_checkbox.setEnabled(ffc_available)
+        self.ov_ffc_checkbox.setEnabled(ffc_available)
 
     def _on_well_changed(self):
         """Handle well selection change."""
@@ -1136,6 +1281,20 @@ class PhenixDataLoaderWidget(QWidget):
     def _on_stitch_changed(self):
         """Handle stitch checkbox change."""
         self.field_combo.setEnabled(not self.stitch_checkbox.isChecked())
+
+    def _on_ov_stitch_changed(self):
+        """Disable the overview's field combo when stitching is requested."""
+        self.ov_field_combo.setEnabled(
+            self.plate_overview_btn.isEnabled()
+            and not self.ov_stitch_checkbox.isChecked()
+        )
+
+    def _on_ov_scalebar_auto_changed(self):
+        """Toggle the custom-length spinbox alongside the auto checkbox."""
+        self.ov_scalebar_um_spin.setEnabled(
+            self.plate_overview_btn.isEnabled()
+            and not self.ov_scalebar_auto_checkbox.isChecked()
+        )
 
     def _update_field_selector(self):
         """Update field selector based on selected well."""
@@ -1351,6 +1510,54 @@ class PhenixDataLoaderWidget(QWidget):
         if not output_dir:
             return
 
+        # Field: stitched / first-per-well (combo index 0) / specific.
+        if self.ov_stitch_checkbox.isChecked():
+            field_arg = "stitched"
+        else:
+            idx = self.ov_field_combo.currentIndex()
+            if idx <= 0:
+                field_arg = None
+            else:
+                field_arg = self.metadata.fields[idx - 1]
+
+        # Channels: pass the explicit selected subset (None means "all"
+        # to the function, but explicit is fine and records the actual
+        # selection in the sidecar).
+        ch_indices = self._get_selected_indices(self.ov_channel_list)
+        if not ch_indices:
+            notifications.show_warning(
+                "Please select at least one channel for the overview."
+            )
+            return
+        channels_arg = [self.metadata.channel_ids[i] for i in ch_indices]
+
+        # Timepoint: single value from combo.
+        tp_idx = self.ov_timepoint_combo.currentIndex()
+        if tp_idx < 0:
+            notifications.show_warning("Please select a timepoint.")
+            return
+        timepoint_arg = self.metadata.timepoints[tp_idx]
+
+        # Z-slices: list, or None when all are selected.
+        z_indices = self._get_selected_indices(self.ov_z_list)
+        if not z_indices:
+            notifications.show_warning(
+                "Please select at least one Z plane for the overview."
+            )
+            return
+        if len(z_indices) == self.ov_z_list.count():
+            z_arg = None
+        else:
+            z_arg = [self.metadata.planes[i] for i in z_indices]
+
+        well_px_arg = self.ov_well_px_spin.value()
+        scalebar_arg = (
+            None
+            if self.ov_scalebar_auto_checkbox.isChecked()
+            else float(self.ov_scalebar_um_spin.value())
+        )
+        ffc_arg = self.ov_ffc_checkbox.isChecked()
+
         self.plate_overview_status_label.setText(
             "Generating plate overview… (see terminal for progress)"
         )
@@ -1359,7 +1566,17 @@ class PhenixDataLoaderWidget(QWidget):
         )
 
         try:
-            generate_plate_overview(exp_path, output_dir)
+            generate_plate_overview(
+                exp_path,
+                output_dir,
+                field=field_arg,
+                channels=channels_arg,
+                timepoint=timepoint_arg,
+                z_slices=z_arg,
+                well_px=well_px_arg,
+                apply_ffc=ffc_arg,
+                scalebar_um=scalebar_arg,
+            )
         except Exception as e:
             self.plate_overview_status_label.setText(
                 f"<b>Error:</b> {e}"
