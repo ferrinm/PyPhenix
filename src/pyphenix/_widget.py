@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import napari
 from napari.utils import notifications
 import numpy as np
@@ -13,6 +15,7 @@ from qtpy.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 
 from ._reader import OperaPhenixReader
 from ._colormaps import channel_color
+from ._overview import generate_plate_overview
 
 def _normalise_well_str(well: str) -> str:
     """
@@ -786,6 +789,28 @@ class PhenixDataLoaderWidget(QWidget):
         save_group.setContentLayout(save_layout)
         layout.addWidget(save_group)
 
+        # ── Plate overview ────────────────────────────────────────────
+        overview_group = CollapsibleSection("Plate Overview")
+        overview_layout = QVBoxLayout()
+
+        self.plate_overview_btn = QPushButton("Generate plate overview")
+        self.plate_overview_btn.setToolTip(
+            "Render a grid of every well as PNGs (one per channel combo) "
+            "into a directory of your choice.\n"
+            "Uses plate-wide contrast limits so wells are visually "
+            "comparable."
+        )
+        self.plate_overview_btn.clicked.connect(self._generate_plate_overview)
+        self.plate_overview_btn.setEnabled(False)
+        overview_layout.addWidget(self.plate_overview_btn)
+
+        self.plate_overview_status_label = QLabel("")
+        self.plate_overview_status_label.setWordWrap(True)
+        overview_layout.addWidget(self.plate_overview_status_label)
+
+        overview_group.setContentLayout(overview_layout)
+        layout.addWidget(overview_group)
+
         # Add stretch to push everything to the top
         layout.addStretch()
 
@@ -1074,6 +1099,7 @@ class PhenixDataLoaderWidget(QWidget):
         self.channel_clear_all_btn.setEnabled(enabled)
         self.z_select_all_btn.setEnabled(enabled)
         self.z_clear_all_btn.setEnabled(enabled)
+        self.plate_overview_btn.setEnabled(enabled)
 
         if enabled and self.reader and self.reader.ffc_profiles:
             self.ffc_checkbox.setEnabled(True)
@@ -1304,6 +1330,69 @@ class PhenixDataLoaderWidget(QWidget):
             notifications.show_error(f"Error saving data: {str(e)}")
             import traceback
             traceback.print_exc()
+
+    # ------------------------------------------------------------------
+    # Plate overview
+    # ------------------------------------------------------------------
+
+    def _generate_plate_overview(self):
+        """Render plate-wide overview PNGs into a user-chosen directory."""
+        if self.reader is None:
+            notifications.show_warning("Please load an experiment first")
+            return
+
+        exp_path = self.path_input.text()
+
+        output_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select output directory for plate overview",
+            exp_path,
+        )
+        if not output_dir:
+            return
+
+        self.plate_overview_status_label.setText(
+            "Generating plate overview… (see terminal for progress)"
+        )
+        notifications.show_info(
+            "Generating plate overview — this may take a while."
+        )
+
+        try:
+            generate_plate_overview(exp_path, output_dir)
+        except Exception as e:
+            self.plate_overview_status_label.setText(
+                f"<b>Error:</b> {e}"
+            )
+            notifications.show_error(
+                f"Error generating plate overview: {str(e)}"
+            )
+            import traceback
+            traceback.print_exc()
+            return
+
+        self.plate_overview_status_label.setText(
+            f"<b>Done:</b> wrote PNGs to {output_dir}"
+        )
+        notifications.show_info(f"Plate overview written to {output_dir}")
+
+        self._open_in_file_viewer(output_dir)
+
+    def _open_in_file_viewer(self, path: str):
+        """Open ``path`` in the host OS's native file viewer."""
+        if sys.platform == "darwin":
+            cmd = ["open", path]
+        elif sys.platform == "win32":
+            cmd = ["explorer", path]
+        else:
+            cmd = ["xdg-open", path]
+
+        try:
+            subprocess.run(cmd, check=False)
+        except Exception as e:
+            notifications.show_warning(
+                f"Could not open {path} in file viewer: {e}"
+            )
 
     # ------------------------------------------------------------------
     # Build a human-readable label for the current selection
