@@ -319,19 +319,89 @@ def test_add_layers_creates_image_layers(widget_with_viewer):
 def test_set_controls_enabled(widget_with_viewer):
     """Test _set_controls_enabled method."""
     widget, _ = widget_with_viewer
-    
+
     # Enable all controls
     widget._set_controls_enabled(True)
-    
+
     assert widget.well_combo.isEnabled()
     assert widget.field_combo.isEnabled()
     assert widget.time_list.isEnabled()
     assert widget.channel_list.isEnabled()
-    
+    assert widget.plate_overview_btn.isEnabled()
+
     # Disable all controls
     widget._set_controls_enabled(False)
-    
+
     assert not widget.well_combo.isEnabled()
     assert not widget.field_combo.isEnabled()
     assert not widget.time_list.isEnabled()
     assert not widget.channel_list.isEnabled()
+    assert not widget.plate_overview_btn.isEnabled()
+
+
+def test_plate_overview_button_disabled_initially(widget_with_viewer):
+    """Plate overview button starts disabled until an experiment is loaded."""
+    widget, _ = widget_with_viewer
+    assert not widget.plate_overview_btn.isEnabled()
+
+
+def test_plate_overview_warns_without_experiment(widget_with_viewer):
+    """Clicking with no reader loaded shows a warning, not a crash."""
+    widget, _ = widget_with_viewer
+    assert widget.reader is None
+
+    with patch('pyphenix._widget.notifications.show_warning') as mock_warn:
+        widget._generate_plate_overview()
+        mock_warn.assert_called_once()
+
+
+def test_plate_overview_button_wiring(widget_with_viewer, tmp_path,
+                                      monkeypatch):
+    """Mock QFileDialog and the OS-open call, verify wiring to
+    generate_plate_overview()."""
+    widget, _ = widget_with_viewer
+
+    # Pretend an experiment is loaded.
+    widget.reader = Mock()
+    widget.path_input.setText("/some/experiment")
+
+    chosen_dir = str(tmp_path)
+    dialog_mock = Mock(return_value=chosen_dir)
+    monkeypatch.setattr(
+        'pyphenix._widget.QFileDialog.getExistingDirectory', dialog_mock
+    )
+
+    with patch('pyphenix._widget.generate_plate_overview') as mock_gen, \
+         patch('pyphenix._widget.subprocess.run') as mock_run:
+        widget._generate_plate_overview()
+
+        # Dialog was opened defaulting to the experiment directory.
+        args, _kwargs = dialog_mock.call_args
+        assert "/some/experiment" in args
+
+        # generate_plate_overview called with (experiment_path, output_dir).
+        mock_gen.assert_called_once_with("/some/experiment", chosen_dir)
+
+        # OS file viewer was invoked with the chosen directory.
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert chosen_dir in cmd
+
+
+def test_plate_overview_cancelled_dialog_does_nothing(widget_with_viewer,
+                                                     monkeypatch):
+    """If the user cancels the directory dialog, nothing is generated."""
+    widget, _ = widget_with_viewer
+    widget.reader = Mock()
+    widget.path_input.setText("/some/experiment")
+
+    monkeypatch.setattr(
+        'pyphenix._widget.QFileDialog.getExistingDirectory',
+        lambda *a, **kw: ""  # user cancelled
+    )
+
+    with patch('pyphenix._widget.generate_plate_overview') as mock_gen, \
+         patch('pyphenix._widget.subprocess.run') as mock_run:
+        widget._generate_plate_overview()
+        mock_gen.assert_not_called()
+        mock_run.assert_not_called()
