@@ -88,3 +88,7 @@ venv/
 
 # personal testing emacs org-mode file
 README.org
+notebook.org
+
+# workshop
+workshop/
