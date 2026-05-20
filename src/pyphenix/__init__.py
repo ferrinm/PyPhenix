@@ -4,6 +4,7 @@ except ImportError:
     __version__ = "unknown"
 
 from ._reader import napari_get_reader, OperaPhenixReader
+from ._overview import generate_plate_overview
 
 # napari and Qt dependencies are optional — only import the widget and
 # launch_viewer helper when they are actually installed.
@@ -83,6 +84,7 @@ __all__ = [
     "launch_viewer",
     "napari_get_reader",
     "OperaPhenixReader",
+    "generate_plate_overview",
 ]
 
 # Only advertise the widget class when it was successfully imported

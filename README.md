@@ -58,6 +58,34 @@ reader = OperaPhenixReader("/path/to/experiment")
 data, metadata = reader.read_data(row="D", column=4)
 ```
 
+#### Plate overview images (no napari required)
+
+`generate_plate_overview()` produces one diagnostic PNG per channel combo
+(plus a JSON provenance sidecar) showing a downsampled thumbnail of every
+well in the plate. Plate-wide contrast is computed once per channel so wells
+are visually comparable.
+
+```python
+from pyphenix import generate_plate_overview
+
+generate_plate_overview(
+    experiment_path="/path/to/experiment",
+    output_dir="/path/to/overviews",
+    # Optional overrides — all have sensible defaults:
+    field=None,        # 'stitched', an int field index, or None (first field)
+    channels=None,     # subset of channel IDs, or None (all acquired)
+    timepoint=None,    # int, or None (first timepoint)
+    z_slices=None,     # int / list / None (all Z planes, max-projected)
+    well_px=300,       # per-well render size on the longest side
+    apply_ffc=True,
+)
+```
+
+For N selected channels the call writes `2**N − 1` PNGs (singletons +
+every merge subset) and a single `*_overview.json` sidecar capturing the
+input parameters, plate-wide contrast limits, channel→colormap assignments,
+and pyphenix version.
+
 #### Full GUI install (napari widget)
 
 To use the interactive napari widget, install with the `napari` extra:
