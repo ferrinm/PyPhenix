@@ -13,7 +13,6 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.gridspec import GridSpec
 from PIL import Image as PILImage
 from tqdm import tqdm
 
@@ -267,25 +266,44 @@ def _render_combo_png(
         x0 = (col - 1) * cell_w
         canvas[y0 : y0 + h, x0 : x0 + w] = rgb[:h, :w]
 
+    # Figure layout in inches → fig fractions. The plate-image axis is
+    # sized so its pixel dimensions at the chosen dpi match the canvas,
+    # i.e. well_px actually controls the output PNG resolution.
     n_combo = len(combo)
-    fig_w = max(8.0, plate_cols * 0.55 + 2.5)
-    fig_h = max(6.0, plate_rows * 0.55 + 2.0)
-    fig = plt.figure(figsize=(fig_w, fig_h), dpi=150)
+    dpi = 150
+    margin_left = 0.7
+    margin_right = 0.25
+    margin_top = 0.95
+    margin_bottom = 0.5
+    colorbar_w = 0.45
+    scalebar_h = 0.35
+    hgap = 0.2
+    vgap = 0.2
 
-    gs = GridSpec(
-        nrows=2,
-        ncols=2,
-        width_ratios=[20, 1],
-        height_ratios=[20, 1],
-        hspace=0.05,
-        wspace=0.05,
-        left=0.07,
-        right=0.93,
-        top=0.88,
-        bottom=0.08,
+    axis_w_in = (plate_cols * cell_w) / dpi
+    axis_h_in = (plate_rows * cell_h) / dpi
+    fig_w = max(8.0, margin_left + axis_w_in + hgap + colorbar_w + margin_right)
+    fig_h = max(
+        6.0, margin_top + axis_h_in + vgap + scalebar_h + margin_bottom
     )
-    ax = fig.add_subplot(gs[0, 0])
-    ax.imshow(canvas, interpolation="nearest", origin="upper")
+    # When the minimums kicked in, expand the axis up to whatever the
+    # canvas aspect ratio allows so wells stay visually square.
+    avail_w = fig_w - (margin_left + hgap + colorbar_w + margin_right)
+    avail_h = fig_h - (margin_top + vgap + scalebar_h + margin_bottom)
+    canvas_aspect = (plate_rows * cell_h) / (plate_cols * cell_w)
+    if avail_w * canvas_aspect <= avail_h:
+        real_axis_w, real_axis_h = avail_w, avail_w * canvas_aspect
+    else:
+        real_axis_w, real_axis_h = avail_h / canvas_aspect, avail_h
+
+    fig = plt.figure(figsize=(fig_w, fig_h), dpi=dpi)
+
+    ax_left = margin_left / fig_w
+    ax_bottom = (margin_bottom + scalebar_h + vgap) / fig_h
+    ax_w_frac = real_axis_w / fig_w
+    ax_h_frac = real_axis_h / fig_h
+    ax = fig.add_axes([ax_left, ax_bottom, ax_w_frac, ax_h_frac])
+    ax.imshow(canvas, interpolation="nearest", origin="upper", aspect="auto")
 
     # Column ticks on top: 1..plate_cols at cell centers.
     col_positions = [(c - 0.5) * cell_w for c in range(1, plate_cols + 1)]
@@ -313,8 +331,9 @@ def _render_combo_png(
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    # Title + two-line subtitle: channel combo on line 1, all
-    # user-controllable rendering options on line 2.
+    # Single-line subtitle: channel combo + all user-controllable
+    # rendering options, separated by middle dots. Inch-based y-positions
+    # keep the gap to the plate axis constant across figure sizes.
     title_combo = _combo_label(combo, channel_names, len({*channel_names}))
     options_line = _options_label(
         objective_mag=objective_mag,
@@ -323,18 +342,28 @@ def _render_combo_png(
         z_label=z_label,
         ffc_label=ffc_label,
     )
-    fig.suptitle(plate_id, fontsize=11, fontweight="bold", y=0.97)
+    subtitle = f"{title_combo}  ·  {options_line}"
     fig.text(
-        0.5, 0.935, title_combo, ha="center", fontsize=9, color="gray"
+        0.5, 1 - 0.3 / fig_h, plate_id,
+        ha="center", fontsize=11, fontweight="bold",
     )
     fig.text(
-        0.5, 0.905, options_line, ha="center", fontsize=8, color="gray"
+        0.5, 1 - 0.62 / fig_h, subtitle,
+        ha="center", fontsize=9, color="gray",
     )
 
-    # Colorbar column on the right: stack one per channel in combo.
-    cb_gs = gs[0, 1].subgridspec(nrows=n_combo, ncols=1, hspace=0.6)
+    # Colorbar column on the right: one per channel in combo, top → bottom.
+    cb_x = (margin_left + real_axis_w + hgap) / fig_w
+    cb_w_frac = colorbar_w / fig_w
+    cb_gap_in = 0.35
+    sub_h_in = (real_axis_h - (n_combo - 1) * cb_gap_in) / n_combo
+    ax_top_in = margin_bottom + scalebar_h + vgap + real_axis_h
     for i, ch_id in enumerate(combo):
-        cax = fig.add_subplot(cb_gs[i, 0])
+        sub_top_in = ax_top_in - i * (sub_h_in + cb_gap_in)
+        sub_bottom_in = sub_top_in - sub_h_in
+        cax = fig.add_axes(
+            [cb_x, sub_bottom_in / fig_h, cb_w_frac, sub_h_in / fig_h]
+        )
         lo, hi = contrast_for_combo[i]
         if is_singleton:
             cmap = matplotlib.colormaps["viridis"]
@@ -349,9 +378,11 @@ def _render_combo_png(
             f"Ch{ch_id}: {channel_names.get(ch_id, '?')}", fontsize=7
         )
 
-    # Scale bar across the bottom (in µm). Length: nice 1/2/5×10^k value
+    # Scale bar below the plate (in µm). Length: nice 1/2/5×10^k value
     # covering ~20 % of one well's visible width.
-    sb_ax = fig.add_subplot(gs[1, 0])
+    sb_ax = fig.add_axes(
+        [ax_left, margin_bottom / fig_h, ax_w_frac, scalebar_h / fig_h]
+    )
     sb_ax.set_xlim(0, cell_w)
     sb_ax.set_ylim(0, 1)
     sb_ax.axis("off")
@@ -370,7 +401,7 @@ def _render_combo_png(
         fontsize=7,
     )
 
-    fig.savefig(outpath, dpi=150, bbox_inches="tight", facecolor="white")
+    fig.savefig(outpath, dpi=dpi, facecolor="white")
     plt.close(fig)
 
 
