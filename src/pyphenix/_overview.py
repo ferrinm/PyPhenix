@@ -165,6 +165,63 @@ def _row_letter(row: int) -> str:
     return chr(ord("A") + row - 1)
 
 
+def _resolve_field_label(
+    field: Optional[Union[int, str]],
+    stitch_fields: bool,
+    fixed_field: Optional[int],
+) -> str:
+    """Human-readable description of the field-selection rule applied."""
+    if stitch_fields:
+        return "stitched"
+    if fixed_field is not None:
+        return str(fixed_field)
+    return "per-well first"
+
+
+def _resolve_z_label(
+    z_slices: Optional[Union[int, List[int]]],
+) -> str:
+    """Human-readable description of the Z-plane selection applied."""
+    if z_slices is None:
+        return "all"
+    if isinstance(z_slices, int):
+        return f"[{z_slices}]"
+    return str(list(z_slices))
+
+
+def _combo_label(
+    combo: Tuple[int, ...],
+    channel_names: Dict[int, str],
+    total_channel_count: int,
+) -> str:
+    """Channel-combo description used in the per-PNG subtitle."""
+    if len(combo) == 1:
+        ch_id = combo[0]
+        return f"Ch{ch_id}: {channel_names.get(ch_id, '?')}"
+    if len(combo) == total_channel_count:
+        return "Merge: all channels"
+    return "Merge: " + " + ".join(f"Ch{c}" for c in combo)
+
+
+def _options_label(
+    *,
+    objective_mag: Optional[str],
+    field_label: str,
+    timepoint_label: str,
+    z_label: str,
+    ffc_label: str,
+) -> str:
+    """Single-line summary of the rendering options applied."""
+    parts: List[str] = []
+    if objective_mag:
+        parts.append(f"Objective: {objective_mag}×")
+    parts.append(f"Field: {field_label}")
+    parts.append(f"T: {timepoint_label}")
+    parts.append(f"Z: {z_label}")
+    parts.append(f"FFC: {ffc_label}")
+    return " · ".join(parts)
+
+
 def _render_combo_png(
     *,
     combo: Tuple[int, ...],
@@ -179,6 +236,10 @@ def _render_combo_png(
     cell_w: int,
     plate_id: str,
     objective_mag: Optional[str],
+    field_label: str,
+    timepoint_label: str,
+    z_label: str,
+    ffc_label: str,
     um_per_thumb_pixel: float,
     outpath: Path,
 ) -> None:
@@ -252,31 +313,23 @@ def _render_combo_png(
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    # Title + subtitle.
-    if is_singleton:
-        ch_id = combo[0]
-        title_combo = f"Ch{ch_id}: {channel_names.get(ch_id, '?')}"
-    elif n_combo == len({*channel_names}):
-        title_combo = "Merge: all channels"
-    else:
-        title_combo = "Merge: " + " + ".join(
-            f"Ch{c}" for c in combo
-        )
-    fig.suptitle(
-        f"{plate_id} — {title_combo}",
-        fontsize=11,
-        fontweight="bold",
-        y=0.97,
+    # Title + two-line subtitle: channel combo on line 1, all
+    # user-controllable rendering options on line 2.
+    title_combo = _combo_label(combo, channel_names, len({*channel_names}))
+    options_line = _options_label(
+        objective_mag=objective_mag,
+        field_label=field_label,
+        timepoint_label=timepoint_label,
+        z_label=z_label,
+        ffc_label=ffc_label,
     )
-    if objective_mag:
-        fig.text(
-            0.5,
-            0.925,
-            f"Objective: {objective_mag}×",
-            ha="center",
-            fontsize=9,
-            color="gray",
-        )
+    fig.suptitle(plate_id, fontsize=11, fontweight="bold", y=0.97)
+    fig.text(
+        0.5, 0.935, title_combo, ha="center", fontsize=9, color="gray"
+    )
+    fig.text(
+        0.5, 0.905, options_line, ha="center", fontsize=8, color="gray"
+    )
 
     # Colorbar column on the right: stack one per channel in combo.
     cb_gs = gs[0, 1].subgridspec(nrows=n_combo, ncols=1, hspace=0.6)
@@ -503,6 +556,11 @@ def generate_plate_overview(
             objective_mag = ch["objective_mag"]
             break
 
+    field_label = _resolve_field_label(field, stitch_fields, fixed_field)
+    timepoint_label = str(timepoint)
+    z_label = _resolve_z_label(z_slices)
+    ffc_label = "on" if apply_ffc else "off"
+
     plate_id = meta.plate_id
     written: List[Path] = []
     n = len(sel_channels)
@@ -546,6 +604,10 @@ def generate_plate_overview(
             cell_w=cell_w,
             plate_id=plate_id,
             objective_mag=objective_mag,
+            field_label=field_label,
+            timepoint_label=timepoint_label,
+            z_label=z_label,
+            ffc_label=ffc_label,
             um_per_thumb_pixel=um_per_thumb_pixel,
             outpath=outpath,
         )

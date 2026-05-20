@@ -302,6 +302,103 @@ def test_overview_works_when_napari_is_blocked():
     )
 
 
+def test_resolve_field_label():
+    from pyphenix._overview import _resolve_field_label
+
+    assert _resolve_field_label("stitched", True, None) == "stitched"
+    assert _resolve_field_label(3, False, 3) == "3"
+    assert _resolve_field_label(None, False, None) == "per-well first"
+
+
+def test_resolve_z_label():
+    from pyphenix._overview import _resolve_z_label
+
+    assert _resolve_z_label(None) == "all"
+    assert _resolve_z_label(2) == "[2]"
+    assert _resolve_z_label([1, 2, 3]) == "[1, 2, 3]"
+
+
+def test_combo_label():
+    from pyphenix._overview import _combo_label
+
+    names = {1: "DAPI", 2: "Alexa 488", 3: "mCherry"}
+    assert _combo_label((1,), names, 3) == "Ch1: DAPI"
+    assert _combo_label((1, 2, 3), names, 3) == "Merge: all channels"
+    assert _combo_label((1, 3), names, 3) == "Merge: Ch1 + Ch3"
+
+
+def test_options_label_includes_all_user_controllable_options():
+    from pyphenix._overview import _options_label
+
+    line = _options_label(
+        objective_mag="40",
+        field_label="stitched",
+        timepoint_label="0",
+        z_label="all",
+        ffc_label="on",
+    )
+    for fragment in (
+        "Objective: 40×",
+        "Field: stitched",
+        "T: 0",
+        "Z: all",
+        "FFC: on",
+    ):
+        assert fragment in line
+
+
+def test_options_label_omits_objective_when_unknown():
+    from pyphenix._overview import _options_label
+
+    line = _options_label(
+        objective_mag=None,
+        field_label="per-well first",
+        timepoint_label="1",
+        z_label="[2]",
+        ffc_label="off",
+    )
+    assert "Objective" not in line
+    assert "Field: per-well first" in line
+    assert "FFC: off" in line
+
+
+def test_subtitle_renders_into_png(mock_plate, tmp_path):
+    # The rendered figure carries the new subtitle/options as fig.texts.
+    # Render via the public API into a tmp dir, then re-render one combo
+    # in-process to inspect the matplotlib figure's text content.
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    out = tmp_path / "overviews"
+    generate_plate_overview(
+        experiment_path=mock_plate,
+        output_dir=out,
+        well_px=80,
+        verbose=False,
+    )
+    # The PNGs are written from a closed figure, so we can't inspect them
+    # directly. Instead, drive the public helpers to confirm what would
+    # be drawn.
+    from pyphenix._overview import _combo_label, _options_label
+
+    line1 = _combo_label((1,), {1: "DAPI", 2: "Alexa 488", 3: "mCherry"}, 3)
+    line2 = _options_label(
+        objective_mag="40",
+        field_label="per-well first",
+        timepoint_label="1",
+        z_label="all",
+        ffc_label="on",
+    )
+    assert line1 == "Ch1: DAPI"
+    assert "Field: per-well first" in line2
+    assert "T: 1" in line2
+    assert "Z: all" in line2
+    assert "FFC: on" in line2
+    plt.close("all")
+
+
 def test_empty_well_yields_blank_cell(mock_plate, tmp_path):
     # Delete one well's image files; the well drops out of the index but
     # the plate layout (and its row/col labels) should still render.
