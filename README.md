@@ -117,6 +117,39 @@ pip install git+https://github.com/ferrinm/pyphenix.git
 ```
 
 
+## Public API
+
+The following names are part of pyphenix's stable public surface — signatures
+and return semantics will not shift between minor versions.
+
+Top-level (`from pyphenix import …`):
+
+- `OperaPhenixReader` — the reader class.
+- `FFCProfile` — flat-field correction profile container.
+  Stable members: `has_correction()`, `generate_correction_image((Y, X))`,
+  `channel_id`, `character`, `mean`, `quality`, `profile_type`.
+- `FFCCoverageWarning` — emitted on partial FFC coverage
+  (also importable from `pyphenix.errors`).
+- `generate_plate_overview()` — plate overview PNG generator.
+- `launch_viewer()`, `napari_get_reader()` — napari entry points.
+
+`OperaPhenixReader` methods that are part of the stable surface:
+
+- `apply_ffc(data, channel_ids, apply=True, verbose=True, *, dtype="float32" | "uint16")`
+  — apply flat-field correction to a `(T, C, Z, Y, X)` array. Returns float32
+  by default; `dtype="uint16"` re-scales each channel by `profile.mean` then
+  clips/rounds/casts to uint16.
+- `ffc_correction_images(shape=None, channel_ids=None) -> dict[int, np.ndarray]`
+  — return per-channel illumination tiles (float32, shape `(Y, X)`) for
+  chunk-wise FFC. Channels without a real profile are omitted from the dict.
+  Defaults: `shape = metadata.image_size`, `channel_ids = metadata.channel_ids`.
+- `ffc_profiles: dict[int, FFCProfile]` — per-channel correction profiles
+  loaded from the FFC XML (empty dict if no FFC data is present).
+
+Both `apply_ffc` and `ffc_correction_images` emit `FFCCoverageWarning` once
+per call when at least one requested channel lacks a real profile and
+`ffc_profiles` is non-empty.
+
 ### Contributing
 
 Contributions are very welcome. Tests can be run with [tox], please ensure

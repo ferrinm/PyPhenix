@@ -1,7 +1,7 @@
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Literal, Optional, Tuple, Union
 import numpy as np
 from PIL import Image
 import re
@@ -11,6 +11,7 @@ import json
 import warnings
 
 from ._colormaps import channel_color
+from .errors import FFCCoverageWarning
 
 
 @dataclass
@@ -593,8 +594,106 @@ class OperaPhenixReader:
                 traceback.print_exc()
             return {}
     
-    def apply_ffc(self, data: np.ndarray, channel_ids: List[int],
-                apply: bool = True, verbose: bool = True) -> np.ndarray:
+    def _classify_ffc_coverage(
+        self, channel_ids: List[int]
+    ) -> Tuple[List[int], List[Tuple[int, str]]]:
+        """Split *channel_ids* into corrected vs. passthrough sets.
+
+        Returns ``(corrected, passthrough)`` where ``corrected`` is the list of
+        channel IDs with a real FFC profile (``has_correction() == True``) and
+        ``passthrough`` is a list of ``(channel_id, reason)`` tuples for
+        channels that will be returned uncorrected. Order matches *channel_ids*.
+        """
+        corrected: List[int] = []
+        passthrough: List[Tuple[int, str]] = []
+        for ch_id in channel_ids:
+            if ch_id in self.ffc_profiles:
+                profile = self.ffc_profiles[ch_id]
+                if profile.has_correction():
+                    corrected.append(ch_id)
+                else:
+                    passthrough.append(
+                        (ch_id, f"profile present but type={profile.profile_type}")
+                    )
+            else:
+                passthrough.append((ch_id, "no profile"))
+        return corrected, passthrough
+
+    def _maybe_warn_ffc_coverage(self, channel_ids: List[int]) -> None:
+        """Emit :class:`FFCCoverageWarning` if some requested channels lack real profiles.
+
+        Silent when ``self.ffc_profiles`` is empty (no FFC XML detected at all)
+        or when every requested channel has a real profile.
+        """
+        if not self.ffc_profiles:
+            return
+        corrected, passthrough = self._classify_ffc_coverage(channel_ids)
+        if not passthrough:
+            return
+        passthrough_ids = [ch for ch, _ in passthrough]
+        reasons = "; ".join(f"channel {ch}: {reason}" for ch, reason in passthrough)
+        msg = (
+            f"FFC profiles cover channels {corrected} but not {passthrough_ids}; "
+            f"channels {passthrough_ids} will be returned uncorrected ({reasons})."
+        )
+        warnings.warn(msg, FFCCoverageWarning, stacklevel=3)
+
+    def ffc_correction_images(
+        self,
+        shape: Optional[Tuple[int, int]] = None,
+        channel_ids: Optional[List[int]] = None,
+    ) -> Dict[int, np.ndarray]:
+        """Return per-channel illumination tiles for chunk-wise FFC.
+
+        Returns a ``{channel_id: (Y, X) float32 tile}`` dict for every channel
+        in *channel_ids* that has a real correction profile
+        (``has_correction() == True``). Channels without a real profile are
+        omitted from the dict; callers should treat absence as "no correction
+        for this channel".
+
+        Parameters
+        ----------
+        shape : tuple of int, optional
+            Output tile shape ``(Y, X)``. Defaults to ``metadata.image_size``.
+        channel_ids : list of int, optional
+            Channels to include. Defaults to ``metadata.channel_ids``.
+
+        Returns
+        -------
+        dict[int, np.ndarray]
+            Mapping from channel ID to a ``(Y, X)`` float32 correction tile.
+            Empty if no requested channel has a real profile.
+
+        Warns
+        -----
+        FFCCoverageWarning
+            Emitted once per call when at least one requested channel is
+            missing a real profile and ``ffc_profiles`` is non-empty.
+        """
+        if shape is None:
+            shape = self.metadata.image_size
+        if channel_ids is None:
+            channel_ids = list(self.metadata.channel_ids)
+
+        self._maybe_warn_ffc_coverage(channel_ids)
+
+        tiles: Dict[int, np.ndarray] = {}
+        for ch_id in channel_ids:
+            profile = self.ffc_profiles.get(ch_id)
+            if profile is not None and profile.has_correction():
+                tile = profile.generate_correction_image(shape)
+                tiles[ch_id] = np.asarray(tile, dtype=np.float32)
+        return tiles
+
+    def apply_ffc(
+        self,
+        data: np.ndarray,
+        channel_ids: List[int],
+        apply: bool = True,
+        verbose: bool = True,
+        *,
+        dtype: Literal["float32", "uint16"] = "float32",
+    ) -> np.ndarray:
         """
         Apply flat field correction to image data.
 
@@ -606,14 +705,37 @@ class OperaPhenixReader:
             List of channel IDs corresponding to C dimension
         apply : bool, default True
             Whether to actually apply correction (False = just return original)
+        verbose : bool, default True
+            Print per-channel progress messages.
+        dtype : {"float32", "uint16"}, keyword-only, default "float32"
+            Output dtype. ``"float32"`` returns the corrected float32 array
+            (existing behaviour). ``"uint16"`` multiplies each corrected
+            channel by its ``profile.mean`` (the per-channel expected centre
+            brightness from the FFC XML), then clips to ``[0, 65535]``,
+            rounds, and casts back to uint16 — useful when downstream storage
+            must stay bounded.
 
         Returns
         -------
         np.ndarray
-            Corrected image data (same shape as input, dtype=float32)
+            Corrected image data. Same shape as input. dtype is float32 by
+            default, or uint16 when ``dtype="uint16"``.
+
+        Warns
+        -----
+        FFCCoverageWarning
+            Emitted once per call when at least one requested channel is
+            missing a real profile and ``ffc_profiles`` is non-empty.
         """
+        if dtype not in ("float32", "uint16"):
+            raise ValueError(
+                f"dtype must be 'float32' or 'uint16', got {dtype!r}"
+            )
+
         if not apply or not self.ffc_profiles:
             return data
+
+        self._maybe_warn_ffc_coverage(channel_ids)
 
         # Convert to float32 for correction
         corrected = data.astype(np.float32)
@@ -631,9 +753,17 @@ class OperaPhenixReader:
                     # This reduces bright center and brightens dark edges
                     corrected[:, c_idx, :, :, :] /= illumination[np.newaxis, np.newaxis, :, :]
 
+                    if dtype == "uint16":
+                        # Re-scale by profile.mean so the result sits in the
+                        # original raw-count range before clipping/casting.
+                        corrected[:, c_idx, :, :, :] *= profile.mean
+
                     if verbose:
                         print(f"  Applied FFC to channel {ch_id} (divided by illumination profile)")
 
+        if dtype == "uint16":
+            np.clip(corrected, 0, 65535, out=corrected)
+            return np.round(corrected).astype(np.uint16)
         return corrected
 
     @staticmethod
