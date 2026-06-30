@@ -405,8 +405,8 @@ def _render_combo_png(
     sb_ax.set_xlim(0, plate_cols * cell_w)
     sb_ax.set_ylim(0, 1)
     sb_ax.axis("off")
-    # Each grid cell shows one field (single-field mode) or one fully
-    # stitched field-of-view (stitched mode), never the whole well.
+    # Each grid cell shows one field (single-field mode) or one well's
+    # fields stitched together (stitched mode).
     cell_visible_um = cell_w * um_per_thumb_pixel
     bar_um = (
         scalebar_um
@@ -418,7 +418,7 @@ def _render_combo_png(
         plt.Rectangle((0, 0.78), bar_thumb_px, 0.12, color="black")
     )
     cell_descriptor = (
-        "one fully stitched field" if stitch_fields else "one field"
+        "one fully stitched well" if stitch_fields else "one field"
     )
     # Bar length centered under the bar; spatial reference below it, also
     # centered under the bar (will overflow when bar is much shorter than
