@@ -2017,12 +2017,14 @@ def napari_get_reader(path):
     
     path = Path(path)
     
-    # Check if this looks like a Phenix experiment directory.
-    if path.is_dir() and any(
-        p.is_file() for p in path.glob("[Ii]mages/[Ii]ndex.xml")
-    ):
-        return phenix_reader
-
+    # Check if this looks like a Phenix experiment directory
+    if path.is_dir():
+        images_path = path / "Images"
+        index_xml_path = images_path / "Index.xml"
+        
+        if images_path.exists() and index_xml_path.exists():
+            return phenix_reader
+    
     return None
 
 
