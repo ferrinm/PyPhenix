@@ -11,7 +11,22 @@ import json
 import warnings
 
 from ._colormaps import channel_color
-from .errors import FFCCoverageWarning
+from .errors import FFCCoverageWarning, UnsupportedHarmonyVersionError
+
+
+HARMONY_NAMESPACES = {
+    "HarmonyV6": "http://www.perkinelmer.com/PEHH/HarmonyV6",
+    "HarmonyV7": "43B2A954-E3C3-47E1-B392-6635266B0DD3/HarmonyV7",
+}
+_VERSION_BY_URI = {uri: version for version, uri in HARMONY_NAMESPACES.items()}
+
+
+def _namespace_map(root: ET.Element) -> Dict[str, str]:
+    """Build an ElementTree namespace map from a document's root element."""
+    match = re.match(r'\{(.+)\}', root.tag)
+    if match is None:
+        return {}
+    return {"ns": match.group(1)}
 
 
 @dataclass
@@ -463,7 +478,21 @@ class OperaPhenixReader:
         # Parse metadata
         self.tree = ET.parse(self.index_xml_path)
         self.root = self.tree.getroot()
-        self.ns = {'ns': '43B2A954-E3C3-47E1-B392-6635266B0DD3/HarmonyV7'}
+
+        self.ns = _namespace_map(self.root)
+        self.harmony_version = _VERSION_BY_URI.get(self.ns.get("ns"))
+        if self.harmony_version is None:
+            supported = ", ".join(
+                f"{version} ({uri})"
+                for version, uri in HARMONY_NAMESPACES.items()
+            )
+            raise UnsupportedHarmonyVersionError(
+                f"{self.index_xml_path} is not a supported Harmony index "
+                f"XML: its root element <{self.root.tag}> carries no "
+                f"recognised namespace. Supported: {supported}."
+            )
+        if self.verbose:
+            print(f"Detected Harmony version: {self.harmony_version}")
 
         self.metadata = self._parse_metadata()
         self.image_index = self._build_image_index()
@@ -535,11 +564,7 @@ class OperaPhenixReader:
             tree = ET.parse(ffc_path)
             root = tree.getroot()
 
-            ns_match = re.match(r'\{(.+)\}', root.tag)
-            if ns_match:
-                ns = {'ns': ns_match.group(1)}
-            else:
-                ns = {}
+            ns = _namespace_map(root)
 
             profiles = {}
 
@@ -1992,14 +2017,12 @@ def napari_get_reader(path):
     
     path = Path(path)
     
-    # Check if this looks like a Phenix experiment directory
-    if path.is_dir():
-        images_path = path / "Images"
-        index_xml_path = images_path / "Index.xml"
-        
-        if images_path.exists() and index_xml_path.exists():
-            return phenix_reader
-    
+    # Check if this looks like a Phenix experiment directory.
+    if path.is_dir() and any(
+        p.is_file() for p in path.glob("[Ii]mages/[Ii]ndex.xml")
+    ):
+        return phenix_reader
+
     return None
 
 
