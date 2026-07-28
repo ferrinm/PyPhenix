@@ -3,19 +3,24 @@ import pytest
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from pyphenix import napari_get_reader, OperaPhenixReader
+from pyphenix import (
+    napari_get_reader,
+    OperaPhenixReader,
+    UnsupportedHarmonyVersionError,
+)
+from pyphenix._reader import HARMONY_NAMESPACES
 
 
-@pytest.fixture
-def mock_phenix_experiment(tmp_path):
+def _write_mock_experiment(tmp_path, harmony_version):
     """Create a minimal mock Opera Phenix experiment directory structure."""
     # Create directory structure
     images_dir = tmp_path / "Images"
     images_dir.mkdir()
-    
-    # Create XML with structure matching real Opera Phenix data
-    ns = "43B2A954-E3C3-47E1-B392-6635266B0DD3/HarmonyV7"
-    
+
+    # Create XML with structure matching real Opera Phenix data.
+    # The namespace distinguishes Harmony versions.
+    ns = HARMONY_NAMESPACES[harmony_version]
+
     root = ET.Element("EvaluationInputData")
     root.set("xmlns", ns)
     root.set("xmlns:xsd", "http://www.w3.org/2001/XMLSchema")
@@ -154,8 +159,14 @@ def mock_phenix_experiment(tmp_path):
     from PIL import Image
     img = Image.fromarray(test_image)
     img.save(images_dir / "r01c01f01p01-ch1sk1fk1fl1.tiff")
-    
+
     return tmp_path
+
+
+@pytest.fixture
+def mock_phenix_experiment(tmp_path):
+    """A mock experiment for tests that don't care about the Harmony version."""
+    return _write_mock_experiment(tmp_path, "HarmonyV7")
 
 
 def test_get_reader_valid_directory(mock_phenix_experiment):
@@ -234,3 +245,42 @@ def test_reader_handles_list_input(mock_phenix_experiment):
     reader = napari_get_reader([str(mock_phenix_experiment)])
     assert reader is not None
     assert callable(reader)
+
+
+@pytest.mark.parametrize("harmony_version", sorted(HARMONY_NAMESPACES))
+def test_reader_reports_detected_harmony_version(tmp_path, harmony_version):
+    """Verify namespace read from the file"""
+    experiment_path = _write_mock_experiment(tmp_path, harmony_version)
+    reader = OperaPhenixReader(str(experiment_path), verbose=False)
+
+    assert reader.harmony_version == harmony_version
+    assert reader.ns == {"ns": HARMONY_NAMESPACES[harmony_version]}
+    # Parsing actually resolved through that namespace.
+    assert reader.metadata.plate_id == "TEST001"
+    assert reader.metadata.channels[1]["name"] == "DAPI"
+
+
+def test_unsupported_namespace_raises(tmp_path):
+    """An unknown namespace fails loudly instead of parsing to nothing."""
+    images_dir = tmp_path / "Images"
+    images_dir.mkdir()
+    root = ET.Element("EvaluationInputData")
+    root.set("xmlns", "http://www.perkinelmer.com/PEHH/HarmonyV99")
+    ET.ElementTree(root).write(
+        images_dir / "Index.xml", encoding="utf-8", xml_declaration=True
+    )
+
+    with pytest.raises(UnsupportedHarmonyVersionError, match="HarmonyV99"):
+        OperaPhenixReader(str(tmp_path), verbose=False)
+
+
+def test_unnamespaced_index_raises(tmp_path):
+    """An index XML with no namespace at all is also rejected."""
+    images_dir = tmp_path / "Images"
+    images_dir.mkdir()
+    ET.ElementTree(ET.Element("EvaluationInputData")).write(
+        images_dir / "Index.xml", encoding="utf-8", xml_declaration=True
+    )
+
+    with pytest.raises(UnsupportedHarmonyVersionError, match="no recognised"):
+        OperaPhenixReader(str(tmp_path), verbose=False)
