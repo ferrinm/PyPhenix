@@ -284,3 +284,20 @@ def test_unnamespaced_index_raises(tmp_path):
 
     with pytest.raises(UnsupportedHarmonyVersionError, match="no recognised"):
         OperaPhenixReader(str(tmp_path), verbose=False)
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        (r"r01c01\f.tiff", "r01c01/f.tiff"),
+        ("r01c01f01p01-ch1sk1fk1fl1.tiff", "r01c01f01p01-ch1sk1fk1fl1.tiff"),
+        ("r01c01/f.tiff", "r01c01/f.tiff"),
+    ],
+    ids=["backslash", "flat", "forward-slash"],
+)
+def test_construct_image_path_normalises_separators(url, expected):
+    """Harmony writes <URL> with Windows separators; POSIX would otherwise read
+    the backslash as part of the filename and no image would resolve."""
+    reader = OperaPhenixReader.__new__(OperaPhenixReader)  # skip __init__
+    reader.images_path = Path("/base/Images")
+    reader.structure_type = "export"
+
+    assert reader._construct_image_path(url, 1, 1) == Path("/base/Images") / expected
