@@ -1,6 +1,6 @@
 import os
 import xml.etree.ElementTree as ET
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Dict, List, Literal, Optional, Tuple, Union
 import numpy as np
 from PIL import Image
@@ -1003,7 +1003,11 @@ class OperaPhenixReader:
             if first_image is not None:
                 # Will load one image to get dimensions
                 url = first_image.find('ns:URL', self.ns).text
-                img_path = self.images_path / url
+                img_path = self._construct_image_path(
+                    url,
+                    int(first_image.find('ns:Row', self.ns).text),
+                    int(first_image.find('ns:Col', self.ns).text),
+                )
                 if img_path.exists():
                     from PIL import Image as PILImage
                     with PILImage.open(img_path) as img:
@@ -1614,6 +1618,9 @@ class OperaPhenixReader:
         Archive format may use well subdirectories like r04c03/
         Export format has flat structure
         """
+        # Normalize the relative URL to use POSIX separators regardless of the OS
+        relative_url = PureWindowsPath(relative_url).as_posix()
+
         if self.structure_type == "archive":
             # Try with well subdirectory first
             well_dir = f"r{row:02d}c{col:02d}"
