@@ -16,7 +16,7 @@ contributions:
   readers:
     - command: pyphenix.get_reader
       accepts_directories: true
-      filename_patterns: ['*']
+      filename_patterns: []
   widgets:
     - command: pyphenix.make_data_loader_widget
       display_name: Opera Phenix Data Loader
