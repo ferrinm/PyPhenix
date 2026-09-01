@@ -5,7 +5,7 @@ except ImportError:
 
 from ._reader import napari_get_reader, OperaPhenixReader, FFCProfile
 from ._overview import generate_plate_overview
-from .errors import FFCCoverageWarning
+from .errors import FFCCoverageWarning, UnsupportedHarmonyVersionError
 
 # napari and Qt dependencies are optional — only import the widget and
 # launch_viewer helper when they are actually installed.
@@ -87,6 +87,7 @@ __all__ = [
     "OperaPhenixReader",
     "FFCProfile",
     "FFCCoverageWarning",
+    "UnsupportedHarmonyVersionError",
     "generate_plate_overview",
 ]
 
