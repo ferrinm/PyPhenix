@@ -49,6 +49,7 @@ One time index in a time-series acquisition.
 A directory produced by Harmony's "Export" operation. Image files are TIFFs
 under `Images/`; metadata is in `Index.xml`. The primary input shape pyphenix
 reads.
+_Avoid_: using for anything pyphenix writes out — that is a **Save**.
 
 **Archive**:
 An alternate Harmony output (`.kw.txt` + per-image files). Supported by the
@@ -59,13 +60,26 @@ Per-**Channel** illumination-correction profile shipped alongside the acquisitio
 When present and enabled, divides out the vignetting/gain pattern. On by default
 in `read_data` and in the plate overview.
 
+### Written output
+
+**Save**:
+A selected **Well** written out of pyphenix to a file the user chooses. The
+OME-TIFF form is self-describing; the numpy form carries its metadata in a
+**Sidecar**.
+_Avoid_: export (that means the Harmony input directory).
+
+**Sidecar**:
+A JSON file written beside a primary output, holding metadata the primary file
+cannot carry itself. Two exist: one per **Plate overview** run, and one per
+numpy-format **Save**.
+
 ### Plate overview (new)
 
 **Plate overview**:
 A single diagnostic PNG showing a grid of downsampled **Well** thumbnails in
 the layout of the **Plate**, used to spot acquisition or biology issues at a
 glance. Generated as one PNG per **Channel combo**, written to a flat output
-directory alongside a JSON provenance sidecar.
+directory alongside a **Sidecar**.
 
 **Channel combo**:
 A non-empty subset of the acquired **Channels** rendered into one **Plate
@@ -89,7 +103,7 @@ every **Well** in the run.
 - A **Plate** contains many **Wells**; a **Well** contains many **Fields**.
 - A **Field** has many **Z-planes** × **Channels** × **Timepoints** (5-D `(T,C,Z,Y,X)`).
 - A **Plate overview** is one PNG per **Channel combo** (so `2^N − 1` PNGs for
-  N selected **Channels**) plus one JSON sidecar.
+  N selected **Channels**) plus one **Sidecar**.
 - **Plate-wide contrast limits** are computed once per overview run and shared
   by every **Channel combo** PNG in that run.
 - The napari widget and the plate overview both consume the channel→colormap

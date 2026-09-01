@@ -92,3 +92,6 @@ notebook.org
 
 # workshop
 workshop/
+
+# local triage notes and agent briefs (not published to the tracker)
+.triage/

@@ -429,3 +429,97 @@ def test_plate_overview_cancelled_dialog_does_nothing(widget_with_viewer,
         widget._generate_plate_overview()
         mock_gen.assert_not_called()
         mock_run.assert_not_called()
+
+
+# ----------------------------------------------------------------------
+# Save
+# ----------------------------------------------------------------------
+
+def _save_metadata():
+    """Metadata shaped like OperaPhenixReader.read_data returns."""
+    return {
+        'plate_id': 'MOCK001',
+        'well': 'A02',
+        'fields': [1],
+        'timepoints': [1],
+        'z_slices': [1],
+        'channels': {
+            1: {'name': 'DAPI', 'excitation': '405', 'emission': '450'},
+            2: {'name': 'GFP', 'excitation': '488', 'emission': '525'},
+        },
+        'pixel_size': {'x': 2.99e-7, 'y': 2.99e-7, 'unit': 'm'},
+        'z_step': None,
+        'time_increment': None,
+        'time_unit': 's',
+        'stitched': False,
+    }
+
+
+def test_save_warns_without_data(widget_with_viewer):
+    """Test that saving with nothing loaded shows a warning."""
+    widget, _ = widget_with_viewer
+
+    assert widget.current_data is None
+
+    with patch('pyphenix._widget.notifications.show_warning') as mock_warning:
+        widget._save_data()
+        mock_warning.assert_called_once()
+
+
+def test_widget_saves_ome_tiff_without_sidecar(widget_with_viewer, tmp_path):
+    """The widget delegates to the shared writer: normalised name, no sidecar."""
+    import tifffile
+
+    widget, _ = widget_with_viewer
+    widget.current_data = np.zeros((1, 2, 1, 4, 4), dtype=np.uint16)
+    widget.current_metadata = _save_metadata()
+    widget.save_path_input.setText(str(tmp_path / "well_A02.tiff"))
+    widget.save_format_combo.setCurrentText('ome-tiff')
+
+    with patch('pyphenix._widget.notifications.show_info'):
+        widget._save_data()
+
+    written = tmp_path / "well_A02.ome.tiff"
+    assert written.exists()
+    with tifffile.TiffFile(written) as tif:
+        assert tif.is_ome
+    assert list(tmp_path.glob("*.json")) == []
+
+
+def test_widget_numpy_save_keeps_sidecar(widget_with_viewer, tmp_path):
+    """The numpy format still writes its sidecar (ADR 0002)."""
+    widget, _ = widget_with_viewer
+    widget.current_data = np.zeros((1, 2, 1, 4, 4), dtype=np.uint16)
+    widget.current_metadata = _save_metadata()
+    widget.save_path_input.setText(str(tmp_path / "well_A02"))
+    widget.save_format_combo.setCurrentText('numpy')
+
+    with patch('pyphenix._widget.notifications.show_info'):
+        widget._save_data()
+
+    assert (tmp_path / "well_A02.npy").exists()
+    assert (tmp_path / "well_A02.json").exists()
+
+
+@pytest.mark.parametrize("save_format,expected", [
+    ('ome-tiff', 'OME-TIFF'),
+    ('numpy', 'Numpy'),
+])
+def test_save_dialog_filter_follows_format(widget_with_viewer, monkeypatch,
+                                           save_format, expected):
+    """The file dialog used to offer *.tiff regardless of the chosen format."""
+    from qtpy.QtWidgets import QFileDialog
+
+    widget, _ = widget_with_viewer
+    widget.save_format_combo.setCurrentText(save_format)
+
+    captured = {}
+
+    def fake_dialog(parent, caption, directory, file_filter):
+        captured['filter'] = file_filter
+        return "", ""
+
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', fake_dialog)
+
+    widget._browse_save_path()
+    assert expected in captured['filter']

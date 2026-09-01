@@ -7,10 +7,10 @@ from PIL import Image
 import re
 import ast
 from dataclasses import dataclass
-import json
 import warnings
 
 from ._colormaps import channel_color
+from ._save import save_numpy, save_ome_tiff
 from .errors import FFCCoverageWarning, UnsupportedHarmonyVersionError
 
 
@@ -1974,34 +1974,27 @@ class OperaPhenixReader:
     
     def _save_output(self, data: np.ndarray, metadata: Dict,
                     output_file: str, output_format: str):
-        """Save data and metadata to file"""
+        """Save data and metadata to file.
+
+        Delegates to :mod:`pyphenix._save`, which is shared with the napari
+        widget so the two cannot drift.
+        """
         output_path = Path(output_file)
-        
-        if output_format == 'numpy':
-            np.save(output_path, data)
-            metadata_path = output_path.with_suffix('.json')
-            with open(metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2, default=str)
-            print(f"Saved numpy array to: {output_path}")
-            print(f"Saved metadata to: {metadata_path}")
-        
-        elif output_format == 'ome-tiff':
-            try:
-                import tifffile
-                tifffile.imwrite(output_path, data, photometric='minisblack')
-                metadata_path = output_path.with_suffix('.json')
-                with open(metadata_path, 'w') as f:
-                    json.dump(metadata, f, indent=2, default=str)
-                print(f"Saved OME-TIFF to: {output_path}")
-                print(f"Saved metadata to: {metadata_path}")
-            except ImportError:
-                print("Warning: tifffile not available. Falling back to numpy format.")
-                self._save_output(data, metadata, str(output_path.with_suffix('.npy')), 'numpy')
-        
-        elif output_format == 'parquet':
+
+        if output_format == 'parquet':
             print("Warning: Parquet format not implemented for image data.")
             print("Saving as numpy instead.")
-            self._save_output(data, metadata, str(output_path.with_suffix('.npy')), 'numpy')
+            output_path = output_path.with_suffix('.npy')
+            output_format = 'numpy'
+
+        if output_format == 'numpy':
+            array_path, sidecar_path = save_numpy(data, metadata, output_path)
+            print(f"Saved numpy array to: {array_path}")
+            print(f"Saved metadata to: {sidecar_path}")
+
+        elif output_format == 'ome-tiff':
+            written_path = save_ome_tiff(data, metadata, output_path)
+            print(f"Saved OME-TIFF to: {written_path}")
 
 def napari_get_reader(path):
     """

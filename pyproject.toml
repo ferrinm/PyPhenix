@@ -33,6 +33,7 @@ dependencies = [
     "Pillow",
     "matplotlib",
     "tqdm",
+    "tifffile",
 ]
 
 [project.optional-dependencies]
