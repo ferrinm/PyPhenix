@@ -17,6 +17,7 @@ from qtpy.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
 from ._reader import OperaPhenixReader
 from ._colormaps import channel_color
 from ._overview import generate_plate_overview
+from ._save import save_numpy, save_ome_tiff
 
 def _normalise_well_str(well: str) -> str:
     """
@@ -1047,12 +1048,16 @@ class PhenixDataLoaderWidget(QWidget):
             self.path_input.setText(exp_path)
 
     def _browse_save_path(self):
-        """Open file dialog for save path."""
+        """Open file dialog for save path, filtered by the selected format."""
+        if self.save_format_combo.currentText() == 'numpy':
+            file_filter = "Numpy files (*.npy)"
+        else:
+            file_filter = "OME-TIFF files (*.ome.tiff *.ome.tif)"
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Data",
             "",
-            "TIFF files (*.tiff *.tif);;Numpy files (*.npy)"
+            file_filter
         )
         if file_path:
             self.save_path_input.setText(file_path)
@@ -1450,40 +1455,21 @@ class PhenixDataLoaderWidget(QWidget):
             output_path = Path(save_path)
 
             if save_format == 'numpy':
-                np.save(output_path, self.current_data)
-                metadata_path = output_path.with_suffix('.json')
-                import json
-                with open(metadata_path, 'w') as f:
-                    json.dump(
-                        self.current_metadata, f, indent=2, default=str
-                    )
-                notifications.show_info(
-                    f"Saved numpy array to: {output_path}"
+                array_path, sidecar_path = save_numpy(
+                    self.current_data, self.current_metadata, output_path
                 )
-                print(f"Saved metadata to: {metadata_path}")
+                notifications.show_info(
+                    f"Saved numpy array to: {array_path}"
+                )
+                print(f"Saved metadata to: {sidecar_path}")
 
             elif save_format == 'ome-tiff':
-                try:
-                    import tifffile
-                    tifffile.imwrite(
-                        output_path, self.current_data,
-                        photometric='minisblack'
-                    )
-                    metadata_path = output_path.with_suffix('.json')
-                    import json
-                    with open(metadata_path, 'w') as f:
-                        json.dump(
-                            self.current_metadata, f, indent=2, default=str
-                        )
-                    notifications.show_info(
-                        f"Saved OME-TIFF to: {output_path}"
-                    )
-                    print(f"Saved metadata to: {metadata_path}")
-                except ImportError:
-                    notifications.show_error(
-                        "tifffile not available. "
-                        "Please install it or use numpy format."
-                    )
+                written_path = save_ome_tiff(
+                    self.current_data, self.current_metadata, output_path
+                )
+                notifications.show_info(
+                    f"Saved OME-TIFF to: {written_path}"
+                )
 
         except Exception as e:
             notifications.show_error(f"Error saving data: {str(e)}")
