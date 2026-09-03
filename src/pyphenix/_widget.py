@@ -1766,29 +1766,17 @@ class PhenixDataLoaderWidget(QWidget):
             'text': [label_text],
         }
 
-        # napari >=0.5 renamed edge_color → border_color and removed
-        # the old name.  Try the new API first, fall back to old.
-        points_kwargs = dict(
+        layer = target_viewer.add_points(
             data=point_coord,
             name=layer_name,
             text=text_props,
             size=0,  # invisible point
             face_color='transparent',
+            border_color='transparent',
             scale=pts_scale,
         )
 
-        try:
-            target_viewer.add_points(
-                border_color='transparent', **points_kwargs
-            )
-        except TypeError:
-            # Older napari that still uses edge_color
-            target_viewer.add_points(
-                edge_color='transparent', **points_kwargs
-            )
-
         # Style the text after adding — napari sets defaults on add
-        layer = target_viewer.layers[layer_name]
         layer.text.color = 'white'
         layer.text.size = 14
         layer.text.anchor = 'upper_left'
