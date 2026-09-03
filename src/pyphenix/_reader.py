@@ -2065,9 +2065,11 @@ def phenix_reader(path):
         if data.shape[0] > 1:  # Multiple timepoints
             channel_data = data[:, ch_idx, :, :, :]
             scale = (1, z_step, pixel_size_y, pixel_size_x)
+            units = ('s', 'µm', 'µm', 'µm')
         else:
             channel_data = data[0, ch_idx, :, :, :]
             scale = (z_step, pixel_size_y, pixel_size_x)
+            units = ('µm', 'µm', 'µm')
         
         # Calculate contrast limits
         nonzero_data = channel_data[channel_data > 0]
@@ -2083,6 +2085,7 @@ def phenix_reader(path):
             'blending': 'additive',
             'scale': scale,
             'contrast_limits': contrast_limits,
+            'units': units,
         }
         
         layer_data_list.append((channel_data, layer_meta, 'image'))
