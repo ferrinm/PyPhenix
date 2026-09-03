@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import warnings
 import napari
 from napari.utils import notifications
 import numpy as np
@@ -18,6 +19,29 @@ from ._reader import OperaPhenixReader
 from ._colormaps import channel_color
 from ._overview import generate_plate_overview
 from ._save import save_numpy, save_ome_tiff
+
+def _show_scale_bar(viewer) -> None:
+    """
+    Turn a viewer's scale bar on and label it in µm.
+
+    - napari <0.8 reads the unit from the scale bar overlay
+    - napari >=0.8 computes it from ``Layer.units`` instead
+    Setting it unconditionally keeps both working until napari 0.10.0
+    The warnings are silenced: there is nothing a user can do about them.
+
+    TODO: Revisit once napari 0.10.0 is released when it will error.
+
+    Parameters
+    ----------
+    viewer : napari.Viewer
+        Viewer whose scale bar should be shown.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', DeprecationWarning)
+        warnings.simplefilter('ignore', FutureWarning)
+        viewer.scale_bar.visible = True
+        viewer.scale_bar.unit = "µm"
+
 
 def _normalise_well_str(well: str) -> str:
     """
@@ -1729,10 +1753,12 @@ class PhenixDataLoaderWidget(QWidget):
             # 4-D viewer: (T, Z, Y, X) — place at t=0, z=0
             point_coord = np.array([[0, 0, y_pos, x_pos]])
             pts_scale = (1, 1, 1, 1)
+            pts_units = ('s', 'µm', 'µm', 'µm')
         else:
             # 3-D viewer: (Z, Y, X) — place at z=0
             point_coord = np.array([[0, y_pos, x_pos]])
             pts_scale = (1, 1, 1)
+            pts_units = ('µm', 'µm', 'µm')
 
         layer_name = f"label: {label_text.splitlines()[0]}"
 
@@ -1766,6 +1792,12 @@ class PhenixDataLoaderWidget(QWidget):
         layer.text.color = 'white'
         layer.text.size = 14
         layer.text.anchor = 'upper_left'
+
+        # The coordinates above are already world (physical) values, so this
+        # layer is in µm too. napari >=0.8 derives the scale bar unit from
+        # *all* layers and falls back to pixels if any one of them disagrees,
+        # so the annotation needs units as much as the image layers do.
+        layer.units = pts_units
 
         return layer_name
 
@@ -1941,8 +1973,7 @@ class PhenixDataLoaderWidget(QWidget):
             new_viewer, label, (0.0, 0.0), scale, has_time
         )
 
-        new_viewer.scale_bar.visible = True
-        new_viewer.scale_bar.unit = "µm"
+        _show_scale_bar(new_viewer)
         new_viewer.reset_view()
 
     # ------------------------------------------------------------------
@@ -2138,10 +2169,12 @@ class PhenixDataLoaderWidget(QWidget):
                 channel_data = data[:, ch_idx, :, :, :]
                 scale = (1, z_step, pixel_size_y, pixel_size_x)
                 translate = (0, 0, ty, tx)
+                units = ('s', 'µm', 'µm', 'µm')
             else:
                 channel_data = data[0, ch_idx, :, :, :]
                 scale = (z_step, pixel_size_y, pixel_size_x)
                 translate = (0, ty, tx)
+                units = ('µm', 'µm', 'µm')
 
             nonzero_data = channel_data[channel_data > 0]
             if len(nonzero_data) > 0:
@@ -2159,6 +2192,7 @@ class PhenixDataLoaderWidget(QWidget):
                 scale=scale,
                 translate=translate,
                 contrast_limits=contrast_limits,
+                units=units,
             )
 
             added_names.append(layer_name)
@@ -2189,8 +2223,7 @@ class PhenixDataLoaderWidget(QWidget):
 
         target_viewer.title = title
 
-        target_viewer.scale_bar.visible = True
-        target_viewer.scale_bar.unit = "µm"
+        _show_scale_bar(target_viewer)
 
         target_viewer.reset_view()
 

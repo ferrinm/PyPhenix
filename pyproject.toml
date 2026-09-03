@@ -39,7 +39,7 @@ dependencies = [
 [project.optional-dependencies]
 # Full GUI install: pip install 'pyphenix[napari]'
 napari = [
-    "napari[all]>=0.4.19",
+    "napari[all]>=0.5.0",
     "qtpy",
     "pandas",
 ]
