@@ -3,9 +3,11 @@ import json
 import xml.etree.ElementTree as ET
 
 import numpy as np
+import ome_types
 import pytest
 import tifffile
 
+from pyphenix._colormaps import COLORMAP_RGB
 from pyphenix._save import (
     OME_SUFFIX,
     ome_tiff_path,
@@ -194,6 +196,62 @@ def test_channel_wavelengths_written(tmp_path):
     channels = root.findall('.//ome:Channel', OME_NS)
     assert [float(c.get('ExcitationWavelength')) for c in channels] == [405, 488]
     assert [float(c.get('EmissionWavelength')) for c in channels] == [450, 525]
+
+
+def _assert_ome_xml_valid(path):
+    """Fail if the written OME-XML does not validate against the OME schema.
+
+    Not pedantry: Bio-Formats gives up on the OME reader when the XML will not
+    parse into its model and falls back to reading the file as a plain TIFF
+    stack, so one invalid attribute silently costs the whole C/Z/T split.
+    """
+    with tifffile.TiffFile(path) as tif:
+        ome_types.validate_xml(tif.ome_metadata)
+
+
+def test_written_ome_xml_validates(tmp_path):
+    data = np.zeros((2, 3, 4, 4, 4), dtype=np.uint16)
+    written = save_ome_tiff(data, _metadata(n_channels=3), tmp_path / "out")
+    _assert_ome_xml_valid(written)
+
+
+@pytest.mark.parametrize("emission", ['0', '0.0', '-1', 'n/a', None])
+def test_wavelength_ome_cannot_carry_is_dropped_per_channel(tmp_path, emission):
+    """Harmony reports an emission of 0 for a channel with no emission filter
+    (Brightfield). OME types the attribute PositiveFloat, so writing that 0
+    through invalidates the XML and Bio-Formats opens the **Save** as a flat
+    C*Z-plane stack. Only the channel with nothing to report loses it -- the
+    other channels keep their real emission wavelengths.
+    """
+    metadata = _metadata(n_channels=3)
+    last = list(metadata['channels'])[-1]
+    metadata['channels'][last]['emission'] = emission
+
+    data = np.zeros((1, 3, 14, 4, 4), dtype=np.uint16)
+    written = save_ome_tiff(data, metadata, tmp_path / "out")
+
+    channels = ome_types.from_tiff(written).images[0].pixels.channels
+    assert [c.emission_wavelength for c in channels] == [450, 525, None]
+    # Excitation is unaffected: only the offending attribute on the offending
+    # channel goes.
+    assert [c.excitation_wavelength for c in channels] == [405, 488, 561]
+    _assert_ome_xml_valid(written)
+
+
+def test_channel_colors_decode_to_the_viewer_colormap(tmp_path):
+    """Without Channel/@Color a reader has nothing to colour by — OME has no
+    other slot for it. Decoding with an independent OME reader checks both the
+    RGBA packing and that the colours land in C-axis order.
+    """
+    data = np.zeros((1, 3, 1, 4, 4), dtype=np.uint16)
+    written = save_ome_tiff(data, _metadata(n_channels=3), tmp_path / "out")
+
+    channels = ome_types.from_tiff(written).images[0].pixels.channels
+    assert [c.color.as_rgb_tuple() for c in channels] == [
+        COLORMAP_RGB['cyan'],    # DAPI
+        COLORMAP_RGB['green'],   # Alexa 488
+        COLORMAP_RGB['magenta'],  # mCherry
+    ]
 
 
 def test_provenance_embedded_as_json(tmp_path):

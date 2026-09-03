@@ -5,11 +5,11 @@ There must be exactly one place that writes a **Save**; the reader's
 cannot drift.
 
 An OME-TIFF **Save** is self-describing: the standard OME fields carry pixel
-size, Z step, time increment and channel identity, and the Phenix provenance
-that OME has no standard home for (plate, well, fields, stitched) goes into the
-OME-XML image description. It therefore gets no **Sidecar**. A numpy **Save**
-still needs one, because a bare ``.npy`` has nowhere to hold any of this. See
-``docs/adr/0002-ome-tiff-saves-are-self-describing.md``.
+size, Z step, time increment, channel identity (and color), and the Phenix
+provenance that OME has no standard home for (plate, well, fields, stitched)
+goes into the OME-XML image description. It therefore gets no **Sidecar**. A
+numpy **Save** still needs one, because a bare ``.npy`` has nowhere to hold any
+of this. See ``docs/adr/0002-ome-tiff-saves-are-self-describing.md``.
 """
 
 import json
@@ -17,6 +17,8 @@ from pathlib import Path
 
 import numpy as np
 import tifffile
+
+from ._colormaps import channel_color_ome
 
 OME_SUFFIX = '.ome.tiff'
 
@@ -76,29 +78,32 @@ def _provenance(metadata):
 
 
 def _channel_metadata(channels):
-    """Build the OME ``Channel`` mapping from the reader's channel dict.
+    """Build the OME ``Channel`` list from the reader's channel dict.
 
     ``channels`` is ordered by construction: the reader builds it from the
     selected channel list, so iteration order is C-axis order.
-    """
-    names = []
-    excitations = []
-    emissions = []
-    for ch_id, info in channels.items():
-        names.append(info.get('name') or f"Channel {ch_id}")
-        excitations.append(_as_float(info.get('excitation')))
-        emissions.append(_as_float(info.get('emission')))
 
-    channel = {'Name': names}
-    # Harmony reports these as XML text; only pass them on if every channel has
-    # a usable number, since OME wants one entry per channel.
-    if all(value is not None for value in excitations):
-        channel['ExcitationWavelength'] = excitations
-        channel['ExcitationWavelengthUnit'] = ['nm'] * len(excitations)
-    if all(value is not None for value in emissions):
-        channel['EmissionWavelength'] = emissions
-        channel['EmissionWavelengthUnit'] = ['nm'] * len(emissions)
-    return channel
+    One dict per channel, not one dict of lists. tifffile accepts either, but
+    only the per-channel form lets a single channel omit an attribute the
+    others carry -- and Harmony reports an emission of 0 for Brightfield, which
+    OME cannot express (see :func:`_as_wavelength`). Under the shared form that
+    one channel would drop ``EmissionWavelength`` for the whole plate, taking
+    every real emission wavelength with it.
+    """
+    channel_list = []
+    for idx, (ch_id, info) in enumerate(channels.items()):
+        name = info.get('name') or f"Channel {ch_id}"
+        entry = {'Name': name, 'Color': channel_color_ome(name, idx)}
+        # Harmony reports these as XML text, and not every channel has one OME
+        # can carry, so each is written only for the channels that do.
+        for key, source in (('Excitation', 'excitation'),
+                            ('Emission', 'emission')):
+            wavelength = _as_wavelength(info.get(source))
+            if wavelength is not None:
+                entry[f'{key}Wavelength'] = wavelength
+                entry[f'{key}WavelengthUnit'] = 'nm'
+        channel_list.append(entry)
+    return channel_list
 
 
 def _as_float(value):
@@ -109,6 +114,29 @@ def _as_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _as_wavelength(value):
+    """Coerce a Harmony wavelength to float, or None if OME cannot carry it.
+
+    OME types ``ExcitationWavelength`` and ``EmissionWavelength`` as
+    ``PositiveFloat``, so only a value Harmony reports as greater than zero can
+    be written. The rule is about representability, not about which channel it
+    came from: Brightfield keeps its excitation, because Harmony reports a real
+    positive ``MainExcitationWavelength`` for the transmitted-light source, and
+    loses only its emission, which Harmony reports as 0 for a channel with no
+    emission filter.
+
+    That 0 is what makes this worth guarding. Writing it through leaves the
+    whole OME-XML schema-invalid, at which point Bio-Formats abandons the OME
+    reader and opens the file as a plain TIFF stack. Dropping
+    the attribute costs only the channel that has no value to report; see
+    :func:`_channel_metadata`.
+    """
+    number = _as_float(value)
+    if number is None or number <= 0:
+        return None
+    return number
 
 
 def ome_metadata(metadata):
@@ -174,6 +202,8 @@ def ome_metadata(metadata):
 def save_ome_tiff(data, metadata, output_file):
     """Write *data* as a self-describing OME-TIFF. No **Sidecar** is written.
 
+    Data is `zlib` DEFLATE-compressed, which is lossless and requires no dependency.
+
     Parameters
     ----------
     data : numpy.ndarray or LazyImageArray
@@ -205,6 +235,7 @@ def save_ome_tiff(data, metadata, output_file):
         data,
         photometric='minisblack',
         ome=True,
+        compression='zlib',
         metadata=ome_metadata(metadata),
     )
     return output_path

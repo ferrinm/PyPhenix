@@ -55,6 +55,7 @@ dev = [
     "napari[qt]",
     "pandas",
     "Pillow",
+    "ome-types[lxml]",
 ]
 
 [project.entry-points."napari.manifest"]

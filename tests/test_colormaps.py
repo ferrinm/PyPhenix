@@ -1,6 +1,12 @@
 import pytest
 
-from pyphenix._colormaps import CHANNEL_COLORS, DEFAULT_COLORS, channel_color
+from pyphenix._colormaps import (
+    CHANNEL_COLORS,
+    COLORMAP_RGB,
+    DEFAULT_COLORS,
+    channel_color,
+    channel_color_ome,
+)
 
 
 @pytest.mark.parametrize("name,expected", [
@@ -58,3 +64,37 @@ def test_substring_match_picks_first_listed_entry_on_ambiguity():
 def test_returns_string():
     assert isinstance(channel_color("DAPI", idx=0), str)
     assert isinstance(channel_color("Unknown", idx=0), str)
+
+
+# ----------------------------------------------------------------------
+# OME Channel/@Color encoding
+# ----------------------------------------------------------------------
+
+def test_every_returnable_colormap_has_an_rgb():
+    """channel_color_ome indexes COLORMAP_RGB by name, so a colour added to
+    CHANNEL_COLORS or DEFAULT_COLORS without an RGB entry would KeyError at
+    save time rather than here."""
+    returnable = set(CHANNEL_COLORS.values()) | set(DEFAULT_COLORS)
+    assert returnable <= set(COLORMAP_RGB)
+
+
+@pytest.mark.parametrize("name,idx,expected", [
+    ("DAPI", 0, 0x00FFFFFF),                    # cyan
+    ("Alexa 488", 0, 0x00FF00FF),               # green
+    ("Alexa 555", 0, 0xFFFF00FF - (1 << 32)),   # yellow, past int32 max
+    ("mCherry", 0, 0xFF00FFFF - (1 << 32)),     # magenta, past int32 max
+    ("Brightfield", 0, 0xFFFFFFFF - (1 << 32)),  # gray -> white
+    # An unknown name falls back to DEFAULT_COLORS by index, and the encoding
+    # must follow that colour rather than the name.
+    ("MyNovelDye", 0, 0x00FFFFFF),              # DEFAULT_COLORS[0], cyan
+    ("MyNovelDye", 5, 0x0000FFFF),              # DEFAULT_COLORS[5], blue
+])
+def test_ome_color_encodes_rgba_big_endian(name, idx, expected):
+    assert channel_color_ome(name, idx) == expected
+
+
+def test_ome_color_fits_signed_int32():
+    """Channel/@Color is an xsd:int; an out-of-range value is invalid OME."""
+    for name in list(CHANNEL_COLORS) + ["MyNovelDye"]:
+        for idx in range(len(DEFAULT_COLORS)):
+            assert -(1 << 31) <= channel_color_ome(name, idx) < (1 << 31)
