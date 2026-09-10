@@ -970,8 +970,15 @@ class PhenixDataLoaderWidget(QWidget):
     # Metadata CSV handling
     # ------------------------------------------------------------------
 
-    def _browse_metadata_csv(self):
-        """Open file dialog to select a metadata CSV."""
+    def _browse_metadata_csv(self) -> str:
+        """
+        Open file dialog to select a metadata CSV.
+
+        Returns
+        -------
+        str
+            The selected path, or ``""`` if the dialog was cancelled.
+        """
         csv_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Experimental Metadata CSV",
@@ -980,12 +987,13 @@ class PhenixDataLoaderWidget(QWidget):
         )
         if csv_path:
             self.csv_path_input.setText(csv_path)
+        return csv_path
 
     def _load_metadata_csv(self):
         """Load the selected metadata CSV into the filter widget."""
-        csv_path = self.csv_path_input.text()
+        # if self.path_input.text() is empty fall back to the Browse dialog
+        csv_path = self.csv_path_input.text() or self._browse_metadata_csv()
         if not csv_path:
-            notifications.show_warning("Please select a metadata CSV file")
             return
 
         well_col = self.well_col_input.text().strip() or "well"
@@ -1038,17 +1046,32 @@ class PhenixDataLoaderWidget(QWidget):
     # Experiment loading & selector population
     # ------------------------------------------------------------------
 
-    def _browse_experiment(self):
-        """Open directory dialog for experiment selection."""
+    def _browse_experiment(self) -> str:
+        """
+        Open directory dialog for experiment selection.
+
+        Returns
+        -------
+        str
+            The selected path, or ``""`` if the dialog was cancelled.
+        """
         exp_path = QFileDialog.getExistingDirectory(
             self,
             "Select Opera Phenix Experiment Directory"
         )
         if exp_path:
             self.path_input.setText(exp_path)
+        return exp_path
 
-    def _browse_save_path(self):
-        """Open file dialog for save path, filtered by the selected format."""
+    def _browse_save_path(self) -> str:
+        """
+        Open file dialog for save path, filtered by the selected format.
+
+        Returns
+        -------
+        str
+            The selected path, or ``""`` if the dialog was cancelled.
+        """
         if self.save_format_combo.currentText() == 'numpy':
             file_filter = "Numpy files (*.npy)"
         else:
@@ -1061,6 +1084,7 @@ class PhenixDataLoaderWidget(QWidget):
         )
         if file_path:
             self.save_path_input.setText(file_path)
+        return file_path
 
     def _on_lazy_loading_changed(self, state):
         """Handle lazy loading checkbox change."""
@@ -1086,12 +1110,9 @@ class PhenixDataLoaderWidget(QWidget):
 
     def _load_experiment(self):
         """Load the selected experiment."""
-        exp_path = self.path_input.text()
-
+        # if self.path_input.text() is empty fall back to the Browse dialog
+        exp_path = self.path_input.text() or self._browse_experiment()
         if not exp_path:
-            notifications.show_warning(
-                "Please select an experiment directory"
-            )
             return
 
         try:
@@ -1444,9 +1465,9 @@ class PhenixDataLoaderWidget(QWidget):
             notifications.show_warning("No data loaded to save")
             return
 
-        save_path = self.save_path_input.text()
+        # if self.path_input.text() is empty fall back to the Browse dialog
+        save_path = self.save_path_input.text() or self._browse_save_path()
         if not save_path:
-            notifications.show_warning("Please specify a save path")
             return
 
         save_format = self.save_format_combo.currentText()

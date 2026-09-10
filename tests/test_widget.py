@@ -262,15 +262,82 @@ def test_browse_experiment_sets_path(widget_with_viewer, tmp_path, monkeypatch):
     assert widget.path_input.text() == str(tmp_path)
 
 
-def test_load_experiment_warning_for_empty_path(widget_with_viewer):
-    """Test that loading with empty path shows warning."""
+def test_load_experiment_prompts_when_path_empty(widget_with_viewer, tmp_path,
+                                                 monkeypatch):
+    """Load with an empty path opens the browse dialog and uses its result."""
+    from qtpy.QtWidgets import QFileDialog
+
     widget, _ = widget_with_viewer
-    
     widget.path_input.setText("")
-    
-    with patch('pyphenix._widget.notifications.show_warning') as mock_warning:
+
+    monkeypatch.setattr(
+        QFileDialog,
+        'getExistingDirectory',
+        lambda *args, **kwargs: str(tmp_path)
+    )
+
+    with patch('pyphenix._widget.OperaPhenixReader') as mock_reader:
         widget._load_experiment()
-        mock_warning.assert_called_once()
+
+    assert widget.path_input.text() == str(tmp_path)
+    assert mock_reader.call_args[0][0] == str(tmp_path)
+
+
+def test_load_experiment_aborts_when_dialog_cancelled(widget_with_viewer,
+                                                      monkeypatch):
+    """Cancelling the prompted dialog leaves the experiment unloaded."""
+    from qtpy.QtWidgets import QFileDialog
+
+    widget, _ = widget_with_viewer
+    widget.path_input.setText("")
+
+    monkeypatch.setattr(
+        QFileDialog, 'getExistingDirectory', lambda *args, **kwargs: ""
+    )
+
+    with patch('pyphenix._widget.OperaPhenixReader') as mock_reader:
+        widget._load_experiment()
+
+    mock_reader.assert_not_called()
+    assert widget.reader is None
+
+
+def test_load_csv_prompts_when_path_empty(widget_with_viewer, tmp_path,
+                                          monkeypatch):
+    """Load Metadata CSV with an empty path opens the browse dialog."""
+    from qtpy.QtWidgets import QFileDialog
+
+    widget, _ = widget_with_viewer
+    widget.csv_path_input.setText("")
+
+    csv_file = tmp_path / "plate_meta.csv"
+    csv_file.write_text("well,treatment\nA01,ctrl\nA02,drug\n")
+    monkeypatch.setattr(
+        QFileDialog, 'getOpenFileName', lambda *args, **kwargs: (str(csv_file), "")
+    )
+
+    with patch('pyphenix._widget.notifications.show_info'):
+        widget._load_metadata_csv()
+
+    assert widget.csv_path_input.text() == str(csv_file)
+    assert "plate_meta.csv" in widget.csv_info_label.text()
+
+
+def test_load_csv_aborts_when_dialog_cancelled(widget_with_viewer, monkeypatch):
+    """Cancelling the prompted dialog loads no metadata."""
+    from qtpy.QtWidgets import QFileDialog
+
+    widget, _ = widget_with_viewer
+    widget.csv_path_input.setText("")
+
+    monkeypatch.setattr(
+        QFileDialog, 'getOpenFileName', lambda *args, **kwargs: ("", "")
+    )
+
+    with patch.object(widget.metadata_filter, 'load_csv') as mock_load:
+        widget._load_metadata_csv()
+
+    mock_load.assert_not_called()
 
 
 def test_visualize_warning_for_no_reader(widget_with_viewer):
@@ -499,6 +566,48 @@ def test_widget_numpy_save_keeps_sidecar(widget_with_viewer, tmp_path):
 
     assert (tmp_path / "well_A02.npy").exists()
     assert (tmp_path / "well_A02.json").exists()
+
+
+def test_save_prompts_when_path_empty(widget_with_viewer, tmp_path,
+                                      monkeypatch):
+    """Save with an empty path opens the browse dialog and uses its result."""
+    from qtpy.QtWidgets import QFileDialog
+
+    widget, _ = widget_with_viewer
+    widget.current_data = np.zeros((1, 2, 1, 4, 4), dtype=np.uint16)
+    widget.current_metadata = _save_metadata()
+    widget.save_path_input.setText("")
+    widget.save_format_combo.setCurrentText('ome-tiff')
+
+    target = tmp_path / "well_A02.tiff"
+    monkeypatch.setattr(
+        QFileDialog, 'getSaveFileName', lambda *args, **kwargs: (str(target), "")
+    )
+
+    with patch('pyphenix._widget.notifications.show_info'):
+        widget._save_data()
+
+    assert widget.save_path_input.text() == str(target)
+    assert (tmp_path / "well_A02.ome.tiff").exists()
+
+
+def test_save_aborts_when_dialog_cancelled(widget_with_viewer, monkeypatch):
+    """Cancelling the prompted dialog writes nothing."""
+    from qtpy.QtWidgets import QFileDialog
+
+    widget, _ = widget_with_viewer
+    widget.current_data = np.zeros((1, 2, 1, 4, 4), dtype=np.uint16)
+    widget.current_metadata = _save_metadata()
+    widget.save_path_input.setText("")
+
+    monkeypatch.setattr(
+        QFileDialog, 'getSaveFileName', lambda *args, **kwargs: ("", "")
+    )
+
+    with patch('pyphenix._widget.save_ome_tiff') as mock_save:
+        widget._save_data()
+
+    mock_save.assert_not_called()
 
 
 @pytest.mark.parametrize("save_format,expected", [
