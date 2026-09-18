@@ -1,4 +1,5 @@
 import os
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path, PureWindowsPath
 from typing import Dict, List, Literal, Optional, Tuple, Union
@@ -267,23 +268,107 @@ def parse_ffc_string(ffc_str: str) -> dict:
     # Wrap in 'Background' key to match expected structure
     return {'Background': bg_result}
 
+
+def _axes_consumed(idx):
+    """How many of the array's axes one index entry consumes.
+
+    ``ndim`` and ``dtype`` are read off the object where it has them, so a
+    lazy array is measured rather than computed.
+    """
+    if idx is Ellipsis or idx is None:
+        return 0
+    if isinstance(idx, bool | np.bool_):
+        return 0  # a scalar mask adds an axis rather than consuming one
+    if isinstance(idx, int | np.integer):
+        return 1
+    ndim, dtype = getattr(idx, 'ndim', None), getattr(idx, 'dtype', None)
+    if ndim is None or dtype is None:
+        try:
+            arr = np.asarray(idx)
+        except Exception:
+            return 1  # not an index numpy will accept either; let it say so
+        ndim, dtype = arr.ndim, arr.dtype
+    return ndim if dtype == bool else 1
+
+
+def _may_trigger_advanced(idx):
+    """False only for entries that are certainly basic indexing.
+
+    numpy accepts sequence types beyond list, tuple and ndarray, so
+    unrecognised forms are assumed advanced; that costs only the fast path.
+    Booleans are excluded from the integers because numpy treats them as
+    advanced.
+    """
+    return not (
+        idx is Ellipsis
+        or idx is None
+        or isinstance(idx, slice)
+        or (
+            isinstance(idx, int | np.integer)
+            and not isinstance(idx, bool | np.bool_)
+        )
+    )
+
+
+def _joins_the_broadcast(idx):
+    """True for an index entry numpy groups with the advanced ones.
+
+    Once a key triggers advanced indexing, integers count towards whether
+    the advanced indices are adjacent, and so towards where the broadcast
+    axes land: in ``x[arr1, :, 1]`` they are not, "since 1 is an advanced
+    index in this regard". Only slices and ``None`` stay out of it.
+
+    https://numpy.org/doc/stable/user/basics.indexing.html#combining-advanced-and-basic-indexing
+    """
+    return not (idx is None or isinstance(idx, slice))
+
+
+def _index_dtype(n):
+    """The narrowest unsigned dtype that can count up to ``n``.
+
+    The stand-ins in :meth:`LazyImageArray._read_by_coordinates` are indexed
+    into arrays the size of the result, so their width is most of what that
+    read costs.
+    """
+    for dtype in (np.uint8, np.uint16, np.uint32):
+        if n <= np.iinfo(dtype).max:
+            return dtype
+    return np.uint64
+
+
 class LazyImageArray:
     """
-    Lazy-loading wrapper for TIFF images.
-    
-    This class provides an array-like interface that loads TIFF files
-    on-demand using PIL, enabling visualization of large datasets without
-    loading everything into RAM at once.
-    
-    Images are cached in memory as they're accessed to improve performance
-    for repeated access to the same data.
+    Array-like view of one **Well**'s TIFFs, read on demand.
+
+    The shape is ``(T, C, Z, Y, X)``: the last two axes are one image's
+    pixels, and every axis before them picks which image, one file per
+    combination. Only the files a key reaches are read, images are cached
+    as they are read -- unless one read holds more images than the cache
+    could keep -- and an image with no file reads as zeros.
+
+    Indexing matches numpy exactly -- integers, slices, ``...``, ``None``,
+    index arrays, boolean masks -- because keys are not interpreted here.
+    Each is handed to numpy to resolve against stand-in arrays that are
+    shaped like this one but cost nothing to index, and whose values say
+    which file every element of the result comes from. ``_decompose``
+    picks between two ways of doing that:
+
+    ``_read_file_by_file``
+        Keys whose file and pixel halves resolve independently: every
+        **Field**, Z-stack, channel and **Well** read, plus pixel slicing.
+        Reads each file once and allocates only the result.
+    ``_read_by_coordinates``
+        Keys where advanced indexing reaches into (Y, X) or spans the image
+        boundary. Reads only the images the key touches, but costs about a
+        dozen bytes per element of the result. For a large result, index
+        the images first: ``data[t, c, z][mask]``.
     """
-    
-    def __init__(self, shape: Tuple[int, ...], dtype, image_paths: Dict, 
+
+    def __init__(self, shape: Tuple[int, ...], dtype, image_paths: Dict,
                  images_path: Path, construct_path_func):
         """
         Initialize lazy-loading array wrapper.
-        
+
         Parameters
         ----------
         shape : tuple
@@ -297,126 +382,246 @@ class LazyImageArray:
         construct_path_func : callable
             Function to construct full image path from URL and well coordinates
         """
-        self.shape = shape
-        self.dtype = dtype
-        self.ndim = len(shape)
+        self.shape = tuple(shape)
+        self.dtype = np.dtype(dtype)
+        self.ndim = len(self.shape)
+        self.size = math.prod(self.shape)
         self.image_paths = image_paths
         self.images_path = images_path
         self.construct_path_func = construct_path_func
-        
+
         # Cache for loaded images (keeps recently accessed images in memory)
         from collections import OrderedDict
         self._image_cache = OrderedDict()
         self._max_cache_size = 100  # Maximum number of images to cache
-        
+
+        # Images found to have no file. Unlike the images themselves these
+        # are not evicted: one tuple costs nothing next to re-checking the
+        # path, and an image absent from the **Export** stays absent.
+        self._missing_images = set()
+
         # Track cache statistics
         self._cache_hits = 0
         self._cache_misses = 0
-    
+
+    def _decompose(self, key):
+        """Split ``key`` into (file part, pixel part, collapse), or None.
+
+        A key splits when numpy resolves the two halves to the same result
+        it would give for the whole key: the file part chooses images, the
+        pixel part crops within each one.
+
+        ``None`` means it does not split, for one of four reasons:
+
+        * Advanced indexing reaches into (Y, X). Where the broadcast axes
+          land then depends on the whole key -- see
+          :func:`_joins_the_broadcast` -- which neither half sees.
+        * A boolean mask covers axes on both sides, leaving no split point.
+        * A zero-width ``...`` separates advanced indices, so it moves the
+          axes they contribute: ``a[:, 0, ..., [0, 1]]`` and
+          ``a[:, 0, [0, 1]]`` address the same axes and disagree. Expanding
+          it to no slices would lose the only record of it.
+        * numpy rejects the key; let the whole-key path say so, in numpy's
+          own words.
+
+        ``collapse`` is False when the key holds an ``...``, which makes
+        numpy return a 0-d array where it would otherwise return a scalar.
+        """
+        if not isinstance(key, tuple):
+            key = (key,)
+        width = sum(_axes_consumed(k) for k in key)
+        dots = [n for n, k in enumerate(key) if k is Ellipsis]
+        advanced = any(map(_may_trigger_advanced, key))
+        if width > self.ndim or len(dots) > 1:
+            return None  # not a key numpy accepts; let it say so
+        if dots and width == self.ndim and advanced:
+            return None  # a zero-width ellipsis separating advanced indices
+        at = dots[0] if dots else len(key)
+        key = key[:at] + (slice(None),) * (self.ndim - width) + key[at + 1:]
+
+        n_files = self.ndim - 2
+        axis = split = 0
+        while axis < n_files:
+            axis += _axes_consumed(key[split])
+            split += 1
+        if axis != n_files:
+            return None  # a mask covering both sides; nowhere to split
+
+        file_key, pixel_key = key[:split], key[split:]
+        if advanced and any(map(_joins_the_broadcast, pixel_key)):
+            return None  # a broadcast reaching into the image
+        return file_key, pixel_key, not dots
+
+    def _load(self, tcz, cache=True):
+        """The pixels of the ``(t, c, z)`` image, or None if it has no file.
+
+        Hits and misses count image reads only: an image with no file is
+        neither, though its absence is remembered, or a partial acquisition
+        re-stats the same missing paths on every pass through the Z slider.
+
+        ``cache=False`` reads without filling the cache, for a read holding
+        more images than the cache could keep.
+
+        The cache is claimed with one ``pop`` because napari slices on a
+        worker thread: a membership test followed by a ``pop`` raised
+        KeyError when another read evicted in between. Losing that race now
+        costs a duplicate read, and may undercount the statistics.
+        """
+        img = self._image_cache.pop(tcz, None)
+        if img is not None:
+            # Re-insert to make the cache evict the least recently used.
+            self._image_cache[tcz] = img
+            self._cache_hits += 1
+            return img
+        if tcz in self._missing_images:
+            return None
+
+        path_info = self.image_paths.get(tcz)
+        if path_info is None:
+            self._missing_images.add(tcz)
+            return None
+        full_path = self.construct_path_func(
+            path_info['url'], path_info['row'], path_info['col']
+        )
+        if not full_path.exists():
+            self._missing_images.add(tcz)
+            return None
+
+        self._cache_misses += 1
+        with Image.open(full_path) as pil_img:
+            img = np.array(pil_img, dtype=self.dtype)
+        if img.shape != self.shape[-2:]:
+            # Otherwise this surfaces as a bare broadcast error further down.
+            raise ValueError(
+                f"{full_path} holds a {img.shape} image, but the experiment "
+                f"metadata declares {self.shape[-2:]} for image {tcz}"
+            )
+
+        if cache:
+            self._image_cache[tcz] = img
+            if len(self._image_cache) > self._max_cache_size:
+                self._image_cache.popitem(last=False)
+        return img
+
     def __getitem__(self, key):
         """
         Load data on-demand when indexed.
-        
-        Supports arbitrary numpy-style indexing including slicing.
-        Only loads the specific images needed for the requested slice.
+
+        Only the images the key reaches are read. See the class docstring
+        for the indexing contract.
         """
-        from PIL import Image as PILImage
-        
-        # Normalize the key to always be a tuple
-        if not isinstance(key, tuple):
-            key = (key,)
-        
-        # Pad key with slice(None) if needed
-        key = key + (slice(None),) * (self.ndim - len(key))
-        
-        # Parse the indexing for T, C, Z dimensions
-        t_idx, c_idx, z_idx = key[:3]
-        spatial_idx = key[3:]
-        
-        # Convert single indices to ranges
-        def normalize_index(idx, max_size):
-            if isinstance(idx, int):
-                if idx < 0:
-                    idx = max_size + idx
-                return [idx]
-            elif isinstance(idx, slice):
-                start, stop, step = idx.indices(max_size)
-                return list(range(start, stop, step))
-            else:
-                return list(idx)
-        
-        t_range = normalize_index(t_idx, self.shape[0])
-        c_range = normalize_index(c_idx, self.shape[1])
-        z_range = normalize_index(z_idx, self.shape[2])
-        
-        # Determine spatial output shape by loading a sample image
-        sample_key = (0, 0, 0) + spatial_idx
-        if sample_key[:3] in self.image_paths:
-            sample_path = self.image_paths[sample_key[:3]]
-            full_path = self.construct_path_func(
-                sample_path['url'], 
-                sample_path['row'], 
-                sample_path['col']
+        decomposed = self._decompose(key)
+        if decomposed is None:
+            return self._read_by_coordinates(key)
+        return self._read_file_by_file(*decomposed)
+
+    def _read_file_by_file(self, file_key, pixel_key, collapse=True,
+                           cache=None):
+        """Read each image the key selects, once, and crop it.
+
+        numpy resolves both halves -- shapes and errors alike, reported
+        against this array's own axis numbers -- against stand-ins that cost
+        nothing to index: a grid of image ids, and one zero-strided image.
+        The stand-in image keeps a length-1 axis per file axis, sliced
+        rather than indexed away so numpy numbers the axes as the caller
+        does; those axes come back off the shape afterwards.
+
+        ``cache`` defaults to caching the images read unless there are more
+        of them than the cache could keep.
+        """
+        n_files = self.ndim - 2
+        file_shape, pixel_shape = self.shape[:n_files], self.shape[n_files:]
+
+        image_ids = np.arange(math.prod(file_shape)).reshape(file_shape)
+        image_ids = image_ids[file_key]
+        cropped = np.broadcast_to(np.uint8(0), (1,) * n_files + pixel_shape)[
+            (slice(0, 1),) * n_files + pixel_key
+        ]
+        result = np.zeros(image_ids.shape + cropped.shape[n_files:],
+                          dtype=self.dtype)
+
+        if cache is None:
+            cache = np.unique(image_ids).size <= self._max_cache_size
+        for out_pos, image_id in np.ndenumerate(image_ids):
+            tcz = tuple(int(i) for i in np.unravel_index(image_id, file_shape))
+            img = self._load(tcz, cache)
+            if img is not None:
+                result[out_pos] = img[pixel_key]
+        return result[()] if collapse else result
+
+    def _read_by_coordinates(self, key):
+        """Resolve ``key`` against per-element (image, pixel) indices.
+
+        numpy applies the key once, to the real shape, against two
+        zero-strided stand-ins naming where every element of the result
+        comes from, so the shape, the axis placement, array-or-scalar and
+        the errors are all its own. Only the images the key touches are
+        read; the price is those two index arrays over the result, so each
+        is no wider than its range needs.
+
+        Sorting by image id keeps the work linear in the image count. The
+        rescan it replaced dominated this read for a **Well** of a few
+        hundred images.
+        """
+        n_files = self.ndim - 2
+        file_shape, pixel_shape = self.shape[:n_files], self.shape[n_files:]
+        n_images, n_pixels = math.prod(file_shape), math.prod(pixel_shape)
+
+        ids = np.broadcast_to(
+            np.arange(n_images, dtype=_index_dtype(n_images))
+            .reshape(file_shape + (1, 1)),
+            self.shape,
+        )
+        pixels = np.broadcast_to(
+            np.arange(n_pixels, dtype=_index_dtype(n_pixels))
+            .reshape(pixel_shape),
+            self.shape,
+        )
+        sel_ids, sel_pixels = ids[key], pixels[key]
+
+        result = np.zeros(np.shape(sel_ids), dtype=self.dtype)
+        flat_ids = np.ravel(sel_ids)
+        flat_pixels = np.ravel(sel_pixels)
+        flat_result = result.reshape(-1)  # freshly allocated, so a view
+
+        order = np.argsort(flat_ids, kind='stable')
+        touched, starts = np.unique(flat_ids[order], return_index=True)
+        ends = np.append(starts[1:], flat_ids.size)
+
+        cache = touched.size <= self._max_cache_size
+        for image_id, start, end in zip(touched, starts, ends):
+            tcz = tuple(int(i) for i in np.unravel_index(image_id, file_shape))
+            img = self._load(tcz, cache)
+            if img is not None:
+                here = order[start:end]
+                flat_result[here] = np.ravel(img)[flat_pixels[here]]
+        # numpy's own choice of array-or-scalar, borrowed from the stand-in.
+        return result if isinstance(sel_ids, np.ndarray) else result[()]
+
+    def __array__(self, dtype=None, copy=None):
+        """
+        Convert to full numpy array (loads everything into memory).
+
+        ``tifffile`` passes ``dtype`` positionally on the **Save** path, and
+        ``np.array()`` passes ``copy`` under numpy 2. Reading every image
+        into a new array is a copy, so ``copy=False`` cannot be honoured.
+
+        The images are not cached: the caller is handed all of them, and
+        caching would hold the whole **Well** a second time.
+        """
+        if copy is False:
+            raise ValueError(
+                "cannot materialize LazyImageArray without copying; use "
+                "np.asarray() instead of np.array(..., copy=False)"
             )
-            if full_path.exists():
-                with PILImage.open(full_path) as pil_img:
-                    sample = np.array(pil_img, dtype=self.dtype)
-                    spatial_shape = sample[spatial_idx].shape
-            else:
-                # Estimate spatial shape
-                h, w = self.shape[3:5]
-                spatial_shape = np.zeros((h, w), dtype=self.dtype)[spatial_idx].shape
-        else:
-            h, w = self.shape[3:5]
-            spatial_shape = np.zeros((h, w), dtype=self.dtype)[spatial_idx].shape
-        
-        # Allocate output array
-        out_shape = (len(t_range), len(c_range), len(z_range)) + spatial_shape
-        result = np.zeros(out_shape, dtype=self.dtype)
-        
-        # Load each requested image
-        for t_out, t in enumerate(t_range):
-            for c_out, c in enumerate(c_range):
-                for z_out, z in enumerate(z_range):
-                    cache_key = (t, c, z)
-                    
-                    if cache_key in self.image_paths:
-                        path_info = self.image_paths[cache_key]
-                        full_path = self.construct_path_func(
-                            path_info['url'],
-                            path_info['row'],
-                            path_info['col']
-                        )
-                        
-                        if full_path.exists():
-                            # Check cache first
-                            if cache_key in self._image_cache:
-                                # Cache hit - move to end (most recently used)
-                                img = self._image_cache.pop(cache_key)
-                                self._image_cache[cache_key] = img
-                                self._cache_hits += 1
-                            else:
-                                # Cache miss - load from disk
-                                with PILImage.open(full_path) as pil_img:
-                                    img = np.array(pil_img, dtype=self.dtype)
-                                
-                                # Add to cache
-                                self._image_cache[cache_key] = img
-                                self._cache_misses += 1
-                                
-                                # Limit cache size (remove oldest - FIFO)
-                                if len(self._image_cache) > self._max_cache_size:
-                                    self._image_cache.popitem(last=False)
-                            
-                            # Apply spatial indexing
-                            result[t_out, c_out, z_out] = img[spatial_idx]
-        
-        return result
-    
-    def __array__(self):
-        """Convert to full numpy array (loads everything into memory)."""
-        return self[:]
-    
+        result = self._read_file_by_file(
+            (slice(None),) * (self.ndim - 2), (slice(None),) * 2, cache=False
+        )
+        return result if dtype is None else result.astype(dtype, copy=False)
+
+    def __len__(self):
+        return self.shape[0]
+
     def __repr__(self):
         cache_info = f"cached={len(self._image_cache)}/{self._max_cache_size}"
         hit_rate = (self._cache_hits / (self._cache_hits + self._cache_misses) * 100 
@@ -427,6 +632,7 @@ class LazyImageArray:
     def clear_cache(self):
         """Clear the image cache to free memory."""
         self._image_cache.clear()
+        self._missing_images.clear()
         print(f"Cache cleared. Stats: {self._cache_hits} hits, {self._cache_misses} misses")
         self._cache_hits = 0
         self._cache_misses = 0
@@ -438,6 +644,7 @@ class LazyImageArray:
         return {
             'cached_images': len(self._image_cache),
             'max_cache_size': self._max_cache_size,
+            'missing_images': len(self._missing_images),
             'cache_hits': self._cache_hits,
             'cache_misses': self._cache_misses,
             'hit_rate_percent': hit_rate

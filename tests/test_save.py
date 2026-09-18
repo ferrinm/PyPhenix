@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import tifffile
 
+from pyphenix._reader import LazyImageArray
 from pyphenix._save import (
     OME_SUFFIX,
     ome_tiff_path,
@@ -274,7 +275,10 @@ def test_save_rejects_unknown_format(tmp_path):
 # ----------------------------------------------------------------------
 
 class _StubLazyArray:
-    """Mimics LazyImageArray's duck-type contract: no ndarray inheritance."""
+    """Mimics LazyImageArray's duck-type contract: no ndarray inheritance.
+
+    ``__array__`` must keep the real wrapper's signature, or this stub goes
+    on passing while every real lazy Save raises TypeError."""
 
     def __init__(self, array):
         self._array = array
@@ -282,7 +286,9 @@ class _StubLazyArray:
         self.ndim = array.ndim
         self.dtype = array.dtype
 
-    def __array__(self, dtype=None):
+    def __array__(self, dtype=None, copy=None):
+        if copy is False:
+            raise ValueError("cannot materialize without copying")
         return self._array if dtype is None else self._array.astype(dtype)
 
 
@@ -295,6 +301,31 @@ def test_lazy_array_saves_identically_to_eager(tmp_path):
     )
     assert np.array_equal(tifffile.imread(eager), tifffile.imread(lazy))
     assert _pixels(eager) == _pixels(lazy)
+
+
+def test_real_lazy_array_saves_as_ome_tiff(tmp_path):
+    """The stub above cannot show this: tifffile materializes with
+    ``np.asarray(data, dtype, 'C')``, so the real wrapper's ``__array__``
+    has to accept a positional dtype or every lazy Save raises TypeError."""
+    from PIL import Image as PILImage
+
+    images = np.arange(2 * 16, dtype=np.uint16).reshape(2, 4, 4)
+    for c, image in enumerate(images):
+        PILImage.fromarray(image).save(tmp_path / f"c{c}.tiff")
+    lazy = LazyImageArray(
+        shape=(1, 2, 1, 4, 4),
+        dtype=np.uint16,
+        image_paths={
+            (0, c, 0): {'url': f"c{c}.tiff", 'row': 1, 'col': 1}
+            for c in range(2)
+        },
+        images_path=tmp_path,
+        construct_path_func=lambda url, row, col: tmp_path / url,
+    )
+
+    written = save_ome_tiff(lazy, _metadata(), tmp_path / "lazy_real")
+
+    assert np.array_equal(tifffile.imread(written), images)
 
 
 # ----------------------------------------------------------------------
